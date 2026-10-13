@@ -28,6 +28,7 @@ import {
   type ValidRecord,
 } from "../lib/excel/types.ts";
 import { simulateHlrMnp, simulateHlrMnpForMobile } from "../lib/services/mock-hlr.ts";
+import { createWorkingBatch, getBatchStatus } from "../lib/workspace/batch.ts";
 
 const realHeaders = [
   "Teléfono Movil",
@@ -554,4 +555,18 @@ test("genera ZIP con carpetas y archivos de lote esperados", async () => {
   assert.ok(reopened.file("YOIGO/LOTE_002.xlsx"));
   assert.ok(reopened.file("VODAFONE/LOTE_001.xlsx"));
   assert.ok(reopened.file("VODAFONE/LOTE_002.xlsx"));
+});
+
+test("aísla cada base de trabajo y refleja el avance sin persistir datos", () => {
+  const firstBatch = createWorkingBatch(sampleDataset, "base-a", "2026-10-12T10:00:00.000Z");
+  const secondBatch = createWorkingBatch(sampleDataset, "base-b", "2026-10-12T10:01:00.000Z");
+  const cleanedFirstBatch = { ...firstBatch, cleaning: cleanDataset(firstBatch.dataset) };
+
+  assert.equal(firstBatch.id, "base-a");
+  assert.equal(secondBatch.id, "base-b");
+  assert.notStrictEqual(firstBatch.distribution, secondBatch.distribution);
+  assert.equal(getBatchStatus(firstBatch), "lista_para_limpiar");
+  assert.equal(getBatchStatus(cleanedFirstBatch), "lista_para_enriquecer");
+  assert.equal(secondBatch.cleaning, null);
+  assert.deepEqual(secondBatch.campaignFilters, { includeWithoutPortabilityDate: true });
 });

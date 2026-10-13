@@ -18,8 +18,12 @@ import type { EnrichmentOutput } from "@/lib/excel/types";
 
 interface CampaignEngineProps {
   filters: CampaignFilters;
+  onBack: () => void;
+  onContinue: () => void;
   onFiltersChange: (nextFilters: CampaignFilters) => void;
+  onSelectedCampaignsChange: (campaigns: CampaignOperatorId[]) => void;
   output: EnrichmentOutput;
+  selectedCampaigns: CampaignOperatorId[];
 }
 
 function CampaignSummaryCard({
@@ -54,19 +58,18 @@ function CampaignSummaryCard({
   );
 }
 
-export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEngineProps) {
-  const [selectedOperators, setSelectedOperators] = useState<CampaignOperatorId[]>([...campaignOperators]);
+export function CampaignEngine({ filters, onBack, onContinue, onFiltersChange, onSelectedCampaignsChange, output, selectedCampaigns }: CampaignEngineProps) {
   const [activeCampaignId, setActiveCampaignId] = useState<CampaignOperatorId>(campaignOperators[0]);
-  const report = useMemo(() => buildCampaignReport(output, selectedOperators, filters), [filters, output, selectedOperators]);
+  const report = useMemo(() => buildCampaignReport(output, selectedCampaigns, filters), [filters, output, selectedCampaigns]);
   const activeCampaign = report.campaigns.find((campaign) => campaign.operator.id === activeCampaignId) ?? report.campaigns[0];
   const activeFilterReasons = Object.entries(report.filterSummary.reasonBreakdown).filter(([, count]) => count > 0);
   const detailColumns = report.columnMapping.permanencia === undefined ? [...report.columns, "Permanencia"] : [...report.columns];
 
   function toggleCampaign(operator: CampaignOperatorId) {
-    setSelectedOperators((current) =>
-      current.includes(operator)
-        ? current.filter((item) => item !== operator)
-        : [...current, operator],
+    onSelectedCampaignsChange(
+      selectedCampaigns.includes(operator)
+        ? selectedCampaigns.filter((item) => item !== operator)
+        : [...selectedCampaigns, operator],
     );
   }
 
@@ -96,22 +99,25 @@ export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEng
 
   return (
     <section aria-labelledby="campanas-title" className="space-y-5">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">Segmentación comercial</p>
           <h2 id="campanas-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#10234a] sm:text-3xl">Campañas Yoigo y Vodafone</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">La elegibilidad se calcula exclusivamente con <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">operador_actual</code>. Los campos provenientes del mock continúan señalados como simulados.</p>
         </div>
-        <span className="inline-flex w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-900">SIMULADO · HLR/MNP LOCAL</span>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onBack} className="inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Volver a enriquecimiento</button>
+          <button type="button" disabled={selectedCampaigns.length === 0} onClick={onContinue} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Preparar distribución</button>
+        </div>
       </div>
 
       {report.columnMapping.operador_actual === undefined ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No se encontró “Operador Actual”. Los registros filtrados se mostrarán como Sin clasificar y el filtro de operador actual no estará disponible.</p> : null}
 
-      <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <fieldset className="border border-slate-200 bg-white p-4">
         <legend className="px-1 text-sm font-semibold text-slate-800">Ofertas comerciales</legend>
         <div className="mt-2 flex flex-wrap gap-2">
           {campaignOperatorDefinitions.map((operator) => {
-            const checked = selectedOperators.includes(operator.id);
+            const checked = selectedCampaigns.includes(operator.id);
             return (
               <label key={operator.id} className={`cursor-pointer rounded-lg border px-3 py-2 text-sm font-semibold transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-blue-600 ${checked ? "border-blue-600 bg-blue-50 text-blue-800" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}>
                 <input type="checkbox" checked={checked} onChange={() => toggleCampaign(operator.id)} className="sr-only" />
@@ -122,7 +128,7 @@ export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEng
         </div>
       </fieldset>
 
-      <fieldset className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+      <fieldset className="border border-slate-200 bg-white p-4">
         <legend className="px-1 text-sm font-semibold text-slate-800">Filtros opcionales</legend>
         <div className="mt-2 grid gap-3 md:grid-cols-3">
           <label className="text-xs font-semibold text-slate-600">Provincia<input type="text" value={filters.provincia ?? ""} onChange={(event) => updateGeographicFilter("provincia", event.target.value)} disabled={report.columnMapping.provincia === undefined} placeholder={report.columnMapping.provincia === undefined ? "Columna no disponible" : "Ej. Madrid"} className="mt-1.5 block min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100" /></label>
@@ -149,7 +155,7 @@ export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEng
         <button type="button" onClick={clearFilters} className="mt-4 text-xs font-bold text-blue-700 hover:text-blue-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Limpiar filtros</button>
       </fieldset>
 
-      <section aria-label="Resumen de filtros" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+      <section aria-label="Resumen de filtros" className="border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
         <div className="flex flex-wrap items-center justify-between gap-2"><p><span className="font-semibold">{report.filteredRecords.length}</span> de {report.filterSummary.totalRecords} registros pasan los filtros.</p><p className="font-semibold text-slate-900">{report.filterSummary.excludedRecords.length} excluidos por filtros</p></div>
         {activeFilterReasons.length > 0 ? <p className="mt-2 text-xs text-slate-500">Desglose: {activeFilterReasons.map(([reason, count]) => `${campaignFilterReasonLabels[reason as keyof typeof campaignFilterReasonLabels]} (${count})`).join(" · ")}</p> : null}
       </section>
@@ -161,7 +167,7 @@ export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEng
           </section>
 
           {activeCampaign ? (
-            <section aria-label={`Detalle de campaña ${activeCampaign.operator.label}`} className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:p-6">
+            <section aria-label={`Detalle de campaña ${activeCampaign.operator.label}`} className="min-w-0 border border-slate-200 bg-white p-5 sm:p-6">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
                 <div><p className="text-base font-semibold text-slate-900">Campaña {activeCampaign.operator.label}</p><p className="mt-1 text-sm text-slate-600">Los excluidos por tener el mismo operador se muestran aparte de los descartados por filtros. La fecha de portabilidad no indica permanencia contractual.</p></div>
                 <div className="flex flex-wrap gap-2"><span className="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-800">{activeCampaign.eligible.length} elegibles</span><span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">Permanencia por registro</span></div>
@@ -181,7 +187,7 @@ export function CampaignEngine({ filters, onFiltersChange, output }: CampaignEng
             </section>
           ) : null}
         </>
-      ) : <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600">Selecciona al menos una campaña comercial para calcular la segmentación.</p>}
+      ) : <p className="border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600">Selecciona al menos una campaña comercial para calcular la segmentación.</p>}
     </section>
   );
 }

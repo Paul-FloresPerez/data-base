@@ -7,9 +7,10 @@ import { AppShell, type WorkflowStep, type WorkspaceModule } from "@/components/
 import { CampaignEngine } from "@/components/campaign-engine";
 import { DashboardOverview } from "@/components/dashboard-overview";
 import { DataTable } from "@/components/data-table";
+import { DistributionWorkspace } from "@/components/distribution-workspace";
 import { ExportWorkspace } from "@/components/export-workspace";
 import { StatusCard } from "@/components/status-card";
-import { buildCampaignReport, campaignOperators, type CampaignFilters } from "@/lib/campaigns/campaign-engine";
+import { buildCampaignReport, campaignOperators, type CampaignFilters, type CampaignOperatorId } from "@/lib/campaigns/campaign-engine";
 import { cleanDataset } from "@/lib/excel/cleaning";
 import { buildEnrichmentOutput } from "@/lib/excel/enrichment-output";
 import { importExcelFile } from "@/lib/excel/import-excel";
@@ -24,6 +25,14 @@ import {
   type ImportedDataset,
 } from "@/lib/excel/types";
 import { simulateHlrMnp } from "@/lib/services/mock-hlr";
+import {
+  createWorkingBatch,
+  defaultCampaignFilters,
+  defaultDistributionSettings,
+  summarizeBatch,
+  type DistributionSettings,
+  type WorkingBatch,
+} from "@/lib/workspace/batch";
 
 function countLabel(count: number, singular: string, plural: string): string {
   return `${count} ${count === 1 ? singular : plural}`;
@@ -43,10 +52,10 @@ function ModuleHeading({
   headingId?: string;
 }) {
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">{eyebrow}</p>
-        <h2 id={headingId} className="mt-1 text-2xl font-semibold tracking-tight text-[#10234a] sm:text-3xl">{title}</h2>
+        <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">{eyebrow}</p>
+        <h2 id={headingId} className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">{title}</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
       </div>
       {action}
@@ -64,7 +73,7 @@ function EmptyModuleState({
   action: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center shadow-[0_1px_2px_rgba(15,23,42,0.03)] sm:px-8">
+    <section className="border border-dashed border-slate-300 bg-white px-5 py-12 text-center sm:px-8">
       <p className="text-sm font-semibold text-slate-900">{title}</p>
       <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-600">{description}</p>
       <div className="mt-5">{action}</div>
@@ -76,7 +85,7 @@ function PrimaryButton({ children, className = "", ...props }: ButtonHTMLAttribu
   return (
     <button
       {...props}
-      className={`inline-flex min-h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300 ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300 ${className}`}
     >
       {children}
     </button>
@@ -87,7 +96,7 @@ function SecondaryButton({ children, className = "", ...props }: ButtonHTMLAttri
   return (
     <button
       {...props}
-      className={`inline-flex min-h-10 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-800 transition-colors hover:bg-blue-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       {children}
     </button>
@@ -97,16 +106,20 @@ function SecondaryButton({ children, className = "", ...props }: ButtonHTMLAttri
 export function ExcelWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>("dashboard");
-  const [dataset, setDataset] = useState<ImportedDataset | null>(null);
-  const [cleaning, setCleaning] = useState<CleaningResult | null>(null);
-  const [enrichmentOutput, setEnrichmentOutput] = useState<EnrichmentOutput | null>(null);
-  const [campaignFilters, setCampaignFilters] = useState<CampaignFilters>({ includeWithoutPortabilityDate: true });
+  const [batch, setBatch] = useState<WorkingBatch | null>(null);
   const [enrichmentMode, setEnrichmentMode] = useState<EnrichmentMode>("preserve");
   const [isOverwriteConfirmationOpen, setIsOverwriteConfirmationOpen] = useState(false);
+  const [isNewBatchConfirmationOpen, setIsNewBatchConfirmationOpen] = useState(false);
+  const [isReplaceConfirmationOpen, setIsReplaceConfirmationOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [isCleaning, startCleaning] = useTransition();
+  const dataset: ImportedDataset | null = batch?.dataset ?? null;
+  const cleaning: CleaningResult | null = batch?.cleaning ?? null;
+  const enrichmentOutput: EnrichmentOutput | null = batch?.enrichmentOutput ?? null;
+  const campaignFilters: CampaignFilters = batch?.campaignFilters ?? defaultCampaignFilters;
 
   const existingEnrichmentFields = dataset
     ? enrichedFieldOrder.filter((field) => dataset.columnMapping.enriched[field] !== undefined)
@@ -121,25 +134,35 @@ export function ExcelWorkspace() {
     const enrichmentReady = Boolean(enrichmentOutput);
 
     return [
-      { id: "importar", label: "Importar", state: dataset ? "complete" : "current" },
+      { id: "importar", label: "Importar", module: "importacion", state: dataset ? "complete" : activeModule === "importacion" ? "current" : "pending" },
       {
         id: "limpiar",
         label: "Limpiar",
+        module: "limpieza",
         state: cleaningReady ? "complete" : dataset && activeModule === "limpieza" ? "current" : "pending",
       },
       {
         id: "enriquecer",
         label: "Enriquecer",
+        module: "enriquecimiento",
         state: enrichmentReady ? "complete" : cleaningReady && activeModule === "enriquecimiento" ? "current" : "pending",
       },
       {
         id: "segmentar",
         label: "Segmentar",
-        state: enrichmentReady && activeModule === "campanas" ? "current" : "pending",
+        module: "campanas",
+        state: enrichmentReady && activeModule === "campanas" ? "current" : enrichmentReady && ["distribucion", "exportacion"].includes(activeModule) ? "complete" : "pending",
+      },
+      {
+        id: "distribuir",
+        label: "Distribuir",
+        module: "distribucion",
+        state: enrichmentReady && activeModule === "distribucion" ? "current" : enrichmentReady && activeModule === "exportacion" ? "complete" : "pending",
       },
       {
         id: "exportar",
         label: "Exportar",
+        module: "exportacion",
         state: enrichmentReady && activeModule === "exportacion" ? "current" : "pending",
       },
     ];
@@ -149,7 +172,26 @@ export function ExcelWorkspace() {
     [campaignFilters, enrichmentOutput],
   );
 
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  async function importFile(file: File) {
+    setError(null);
+    setIsImporting(true);
+
+    try {
+      const nextDataset = await importExcelFile(file);
+      setBatch(createWorkingBatch(nextDataset));
+      setEnrichmentMode("preserve");
+      setIsOverwriteConfirmationOpen(false);
+      setIsReplaceConfirmationOpen(false);
+      setPendingFile(null);
+      setActiveModule("importacion");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudo importar el archivo.");
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
 
@@ -157,27 +199,42 @@ export function ExcelWorkspace() {
       return;
     }
 
-    setError(null);
-    setIsImporting(true);
-
-    try {
-      const nextDataset = await importExcelFile(file);
-      setDataset(nextDataset);
-      setCleaning(null);
-      setEnrichmentOutput(null);
-      setCampaignFilters({ includeWithoutPortabilityDate: true });
-      setEnrichmentMode("preserve");
-      setIsOverwriteConfirmationOpen(false);
-    } catch (caughtError) {
-      setDataset(null);
-      setCleaning(null);
-      setEnrichmentOutput(null);
-      setCampaignFilters({ includeWithoutPortabilityDate: true });
-      setIsOverwriteConfirmationOpen(false);
-      setError(caughtError instanceof Error ? caughtError.message : "No se pudo importar el archivo.");
-    } finally {
-      setIsImporting(false);
+    if (batch) {
+      setPendingFile(file);
+      setIsReplaceConfirmationOpen(true);
+      return;
     }
+
+    void importFile(file);
+  }
+
+  function startNewBatch() {
+    if (batch) {
+      setIsNewBatchConfirmationOpen(true);
+      return;
+    }
+
+    setActiveModule("importacion");
+  }
+
+  function confirmNewBatch() {
+    setBatch(null);
+    setPendingFile(null);
+    setError(null);
+    setEnrichmentMode("preserve");
+    setIsOverwriteConfirmationOpen(false);
+    setIsNewBatchConfirmationOpen(false);
+    setIsReplaceConfirmationOpen(false);
+    setActiveModule("importacion");
+  }
+
+  function confirmReplaceBatch() {
+    if (!pendingFile) {
+      setIsReplaceConfirmationOpen(false);
+      return;
+    }
+
+    void importFile(pendingFile);
   }
 
   function handleClean() {
@@ -192,8 +249,16 @@ export function ExcelWorkspace() {
 
     setError(null);
     startCleaning(() => {
-      setCleaning(cleanDataset(dataset));
-      setEnrichmentOutput(null);
+      const nextCleaning = cleanDataset(dataset);
+      setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
+        ? {
+            ...currentBatch,
+            cleaning: nextCleaning,
+            enrichmentOutput: null,
+            campaignFilters: { ...defaultCampaignFilters },
+            distribution: defaultDistributionSettings(),
+          }
+        : currentBatch);
       setIsOverwriteConfirmationOpen(false);
     });
   }
@@ -209,7 +274,10 @@ export function ExcelWorkspace() {
     try {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
       const simulatedRecords = simulateHlrMnp(cleaning.validRecords);
-      setEnrichmentOutput(buildEnrichmentOutput(dataset, simulatedRecords, enrichmentMode));
+      const nextOutput = buildEnrichmentOutput(dataset, simulatedRecords, enrichmentMode);
+      setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
+        ? { ...currentBatch, enrichmentOutput: nextOutput }
+        : currentBatch);
     } catch {
       setError("No se pudo completar la simulación local.");
     } finally {
@@ -231,8 +299,33 @@ export function ExcelWorkspace() {
   }
 
   function handleModeChange(mode: EnrichmentMode) {
+    if (mode === enrichmentMode) {
+      return;
+    }
+
     setEnrichmentMode(mode);
-    setEnrichmentOutput(null);
+    setBatch((currentBatch) => currentBatch
+      ? {
+          ...currentBatch,
+          enrichmentOutput: null,
+          campaignFilters: { ...defaultCampaignFilters },
+          distribution: defaultDistributionSettings(),
+        }
+      : currentBatch);
+  }
+
+  function updateCampaignFilters(nextFilters: CampaignFilters) {
+    setBatch((currentBatch) => currentBatch ? { ...currentBatch, campaignFilters: nextFilters } : currentBatch);
+  }
+
+  function updateSelectedCampaigns(selectedCampaigns: CampaignOperatorId[]) {
+    setBatch((currentBatch) => currentBatch
+      ? { ...currentBatch, distribution: { ...currentBatch.distribution, selectedCampaigns } }
+      : currentBatch);
+  }
+
+  function updateDistribution(settings: DistributionSettings) {
+    setBatch((currentBatch) => currentBatch ? { ...currentBatch, distribution: settings } : currentBatch);
   }
 
   function navigate(module: WorkspaceModule) {
@@ -247,6 +340,7 @@ export function ExcelWorkspace() {
           headingId="importacion-title"
           title="Importa tu base de contactos"
           description="Lee archivos Excel en este navegador. La estructura y el orden de la base se conservan para los módulos posteriores."
+          action={<SecondaryButton type="button" onClick={() => navigate("dashboard")}>Volver al resumen</SecondaryButton>}
         />
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
@@ -309,7 +403,7 @@ export function ExcelWorkspace() {
           headingId="limpieza-title"
           title="Limpieza de registros"
           description="Solo los móviles españoles válidos avanzan al enriquecimiento. Los excluidos se conservan localmente con su motivo y fila de origen."
-          action={<SecondaryButton type="button" disabled={dataset.columnMapping.nombre === undefined || isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}
+          action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton> : <SecondaryButton type="button" disabled={dataset.columnMapping.nombre === undefined || isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
         />
 
         {dataset.columnMapping.nombre === undefined ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No se puede continuar: falta la columna “Nombres” o “Nombre” en el Excel.</div> : null}
@@ -348,7 +442,7 @@ export function ExcelWorkspace() {
 
     return (
       <section aria-labelledby="enriquecimiento-title" className="space-y-5">
-        <ModuleHeading eyebrow="Simulación local" headingId="enriquecimiento-title" title="Enriquecimiento HLR/MNP" description="Los resultados del mock son deterministas y se muestran siempre como simulados; no se hacen llamadas externas." />
+        <ModuleHeading eyebrow="Simulación local" headingId="enriquecimiento-title" title="Enriquecimiento HLR/MNP" description="Los resultados del mock son deterministas y se muestran siempre como simulados; no se hacen llamadas externas." action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("limpieza")}>Volver a limpieza</SecondaryButton>{enrichmentOutput ? <PrimaryButton type="button" onClick={() => navigate("campanas")}>Continuar a campañas</PrimaryButton> : null}</div>} />
         <div className="grid gap-5 xl:grid-cols-[minmax(290px,0.7fr)_minmax(0,1.3fr)]">
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <p className="text-sm font-semibold text-slate-900">Configuración</p>
@@ -389,7 +483,15 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Aún no hay datos para segmentar" description="Completa la limpieza y el enriquecimiento simulado para consultar la elegibilidad por operador y los filtros geográficos." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <CampaignEngine output={enrichmentOutput} filters={campaignFilters} onFiltersChange={setCampaignFilters} />;
+    return <CampaignEngine output={enrichmentOutput} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch?.distribution.selectedCampaigns ?? []} />;
+  }
+
+  function renderDistributionModule() {
+    if (!enrichmentOutput || !campaignReport || !batch) {
+      return <EmptyModuleState title="Primero completa las campañas" description="La distribución usa los registros enriquecidos y los filtros activos de las campañas para calcular los lotes." action={<PrimaryButton type="button" onClick={() => navigate("campanas")}>Ir a campañas</PrimaryButton>} />;
+    }
+
+    return <DistributionWorkspace report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onContinue={() => navigate("exportacion")} />;
   }
 
   function renderExportModule() {
@@ -397,12 +499,19 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Completa el enriquecimiento antes de exportar" description="La exportación requiere una base válida y enriquecida. Los lotes de campañas respetarán los filtros activos cuando haya resultados disponibles." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <ExportWorkspace output={enrichmentOutput} report={campaignReport} />;
+    return <ExportWorkspace output={enrichmentOutput} report={campaignReport} settings={batch?.distribution ?? defaultDistributionSettings()} onBack={() => navigate("distribucion")} />;
   }
 
   let moduleContent: ReactNode;
   if (activeModule === "dashboard") {
-    moduleContent = <DashboardOverview imported={dataset?.records.length ?? 0} valid={cleaning?.validRecords.length ?? null} excluded={cleaning?.excludedRecords.length ?? null} enriched={enrichmentOutput?.rows.length ?? null} campaigns={enrichmentOutput ? 4 : 0} onNavigate={navigate} />;
+    const nextModule: WorkspaceModule = !dataset
+      ? "importacion"
+      : !cleaning
+        ? "limpieza"
+        : !enrichmentOutput
+          ? "enriquecimiento"
+          : "campanas";
+    moduleContent = <DashboardOverview batch={batch ? summarizeBatch(batch) : null} imported={dataset?.records.length ?? 0} valid={cleaning?.validRecords.length ?? null} excluded={cleaning?.excludedRecords.length ?? null} enriched={enrichmentOutput?.rows.length ?? null} campaigns={batch?.distribution.selectedCampaigns.length ?? 0} nextModule={nextModule} onNavigate={navigate} />;
   } else if (activeModule === "importacion") {
     moduleContent = renderImportModule();
   } else if (activeModule === "limpieza") {
@@ -411,14 +520,36 @@ export function ExcelWorkspace() {
     moduleContent = renderEnrichmentModule();
   } else if (activeModule === "campanas") {
     moduleContent = renderCampaignsModule();
+  } else if (activeModule === "distribucion") {
+    moduleContent = renderDistributionModule();
   } else {
     moduleContent = renderExportModule();
   }
 
   return (
-    <AppShell activeModule={activeModule} onNavigate={navigate} workflow={workflow}>
+    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onStartNewBatch={startNewBatch} workflow={workflow}>
       {error ? <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span className="font-semibold">No se pudo continuar: </span>{error}</div> : null}
       {moduleContent}
+      {isNewBatchConfirmationOpen ? (
+        <div role="presentation" className="fixed inset-0 z-30 grid place-items-center bg-slate-950/35 p-4">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="new-batch-title" className="w-full max-w-md border border-slate-200 bg-white p-5 shadow-2xl">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Nueva base</p>
+            <h2 id="new-batch-title" className="mt-2 text-lg font-semibold tracking-tight text-slate-950">¿Iniciar una base nueva?</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">La base activa y sus resultados dejarán de estar disponibles en esta sesión. Los archivos originales no se modifican.</p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setIsNewBatchConfirmationOpen(false)} className="min-h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Cancelar</button><button type="button" onClick={confirmNewBatch} className="min-h-9 rounded-md bg-[#174ea6] px-3 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Crear nueva base</button></div>
+          </section>
+        </div>
+      ) : null}
+      {isReplaceConfirmationOpen ? (
+        <div role="presentation" className="fixed inset-0 z-30 grid place-items-center bg-slate-950/35 p-4">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="replace-batch-title" className="w-full max-w-md border border-slate-200 bg-white p-5 shadow-2xl">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Cambiar de base</p>
+            <h2 id="replace-batch-title" className="mt-2 text-lg font-semibold tracking-tight text-slate-950">¿Importar un archivo distinto?</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Se reemplazará la base activa por <span className="font-semibold text-slate-900">{pendingFile?.name}</span>. Sus resultados locales actuales dejarán de estar disponibles.</p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => { setPendingFile(null); setIsReplaceConfirmationOpen(false); }} className="min-h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Cancelar</button><button type="button" onClick={confirmReplaceBatch} className="min-h-9 rounded-md bg-[#174ea6] px-3 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Reemplazar e importar</button></div>
+          </section>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
