@@ -1,14 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { getAccessDecision } from "@/lib/auth/access-control";
+import { getAuthSecret } from "@/lib/auth/auth-secret";
 import { sessionTokenCookieName } from "@/lib/auth/constants";
 
 export async function proxy(request: NextRequest) {
-  const token = await getToken({
-    req: request,
-    secret: process.env.NEXTAUTH_SECRET,
-    cookieName: sessionTokenCookieName,
-  });
+  const authSecret = getAuthSecret();
+  let token = null;
+
+  if (authSecret) {
+    try {
+      token = await getToken({
+        req: request,
+        secret: authSecret,
+        cookieName: sessionTokenCookieName,
+      });
+    } catch {
+      // A malformed cookie or incomplete deployment configuration must never
+      // allow access to a protected page or API route.
+      token = null;
+    }
+  }
+
   const decision = getAccessDecision({
     isAuthenticated: Boolean(token?.sub),
     pathname: request.nextUrl.pathname,

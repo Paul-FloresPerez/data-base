@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { getAuthSecret } from "@/lib/auth/auth-secret";
 import { sessionTokenCookieName, sessionTokenCookieOptions } from "@/lib/auth/constants";
 import { verifyAdminCredentials } from "@/lib/server/admin-credentials";
 import {
@@ -15,7 +16,7 @@ function getLoginAttemptKey(username: string) {
 }
 
 export const authOptions: AuthOptions = {
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: getAuthSecret(),
   session: {
     strategy: "jwt",
     maxAge: 8 * 60 * 60,
