@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { BatchSummary } from "@/lib/workspace/batch";
+import { LogoutButton } from "@/components/logout-button";
 
 export const workspaceModules = [
   { id: "dashboard", label: "Dashboard", pending: false },
@@ -145,10 +146,14 @@ export function AppShell({ activeModule, batch, children, onNavigate, onStartNew
                 ))}
               </select>
             </label>
-            <button type="button" onClick={onStartNewBatch} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] sm:hidden">Nueva</button>
+            <div className="flex items-center gap-2 sm:hidden">
+              <button type="button" onClick={onStartNewBatch} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Nueva</button>
+              <LogoutButton />
+            </div>
             <div className="hidden items-center gap-2 sm:flex">
-              <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600">Sesión local</span>
+              <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-600">Administrador</span>
               <button type="button" onClick={onStartNewBatch} className="inline-flex min-h-9 items-center justify-center rounded-md bg-[#174ea6] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Nueva base</button>
+              <LogoutButton />
             </div>
           </div>
         </header>

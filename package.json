@@ -5,16 +5,32 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "prebuild": "prisma generate",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test tests/excel-processing.test.ts"
+    "test": "node --conditions=react-server --experimental-strip-types --test tests/excel-processing.test.ts tests/auth-access.test.ts tests/password-hash.test.ts",
+    "auth:provision-admin": "node --conditions=react-server --experimental-strip-types scripts/provision-admin.ts",
+    "auth:verify-admin": "node --conditions=react-server --experimental-strip-types scripts/verify-admin-user.ts",
+    "auth:generate-secret": "node --experimental-strip-types scripts/create-auth-secret.ts",
+    "db:check": "node --conditions=react-server --experimental-strip-types scripts/check-db-connection.ts",
+    "db:diagnose": "node --experimental-strip-types scripts/diagnose-neon-connection.ts",
+    "db:verify-migration-target": "node --experimental-strip-types scripts/verify-migration-target.ts",
+    "db:verify-schema": "node --experimental-strip-types scripts/verify-schema.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.2.0",
+    "@next/env": "16.4.0",
+    "@prisma/adapter-neon": "7.10.1",
+    "@prisma/client": "7.10.1",
     "jszip": "^3.10.2",
     "next": "16.4.0",
+    "next-auth": "^4.24.15",
+    "prisma": "7.10.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "server-only": "0.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

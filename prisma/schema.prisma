@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum EstadoBase {
+  LISTA_PARA_LIMPIAR
+  LISTA_PARA_ENRIQUECER
+  LISTA_PARA_DISTRIBUIR
+}
+
+enum TipificacionRegistro {
+  PENDIENTE
+  VALIDO
+  TELEFONO_VACIO
+  TELEFONO_FIJO
+  TELEFONO_INVALIDO
+  NOMBRE_VACIO
+  TELEFONO_DUPLICADO
+}
+
+enum Campana {
+  YOIGO
+  VODAFONE
+}
+
+model Base {
+  id                  String     @id @default(uuid()) @db.Uuid
+  nombreOriginal      String     @map("nombre_original")
+  creadoEn            DateTime   @default(now()) @map("creado_en")
+  actualizadoEn       DateTime   @updatedAt @map("actualizado_en")
+  estado              EstadoBase @default(LISTA_PARA_LIMPIAR)
+  cantidadImportados  Int        @default(0) @map("cantidad_importados")
+  cantidadValidos     Int        @default(0) @map("cantidad_validos")
+  cantidadExcluidos   Int        @default(0) @map("cantidad_excluidos")
+  metadatos           Json
+  registros           Registro[]
+  lotes               Lote[]
+
+  @@index([estado])
+  @@map("bases")
+}
+
+model Registro {
+  id                  String                @id @default(uuid()) @db.Uuid
+  baseId              String                @map("base_id") @db.Uuid
+  numeroFilaOriginal  Int                   @map("numero_fila_original")
+  movilNormalizado    String?               @map("movil_normalizado")
+  documento           String?
+  nombre              String?
+  operadorActual      String?               @map("operador_actual")
+  operadorOriginal    String?               @map("operador_original")
+  fechaPortabilidad   DateTime?             @map("fecha_portabilidad") @db.Date
+  tipificacion        TipificacionRegistro  @default(PENDIENTE)
+  datosOriginales     Json                  @map("datos_originales")
+  creadoEn            DateTime              @default(now()) @map("creado_en")
+  base                Base                  @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  lotes               LoteRegistro[]
+
+  @@unique([baseId, numeroFilaOriginal])
+  @@index([baseId])
+  @@index([baseId, movilNormalizado])
+  @@index([baseId, tipificacion])
+  @@map("registros")
+}
+
+model Lote {
+  id                  String         @id @default(uuid()) @db.Uuid
+  baseId              String         @map("base_id") @db.Uuid
+  campana             Campana
+  numeroLote          Int            @map("numero_lote")
+  cantidadRegistros   Int            @default(0) @map("cantidad_registros")
+  creadoEn            DateTime       @default(now()) @map("creado_en")
+  base                Base           @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  registros           LoteRegistro[]
+
+  @@unique([baseId, campana, numeroLote])
+  @@index([baseId])
+  @@map("lotes")
+}
+
+model LoteRegistro {
+  loteId              String    @map("lote_id") @db.Uuid
+  registroId          String    @map("registro_id") @db.Uuid
+  creadoEn            DateTime  @default(now()) @map("creado_en")
+  lote                Lote      @relation(fields: [loteId], references: [id], onDelete: Cascade)
+  registro            Registro  @relation(fields: [registroId], references: [id], onDelete: Cascade)
+
+  @@id([loteId, registroId])
+  @@index([registroId])
+  @@map("lote_registros")
+}
+
+model Usuario {
+  id           String   @id @default(uuid()) @db.Uuid
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  activo       Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("usuarios")
+}
