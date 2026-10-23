@@ -33,6 +33,7 @@ export function SavedBasesPanel({ batch, onOpen, onNavigate }: { batch: WorkingB
 
   async function save() {
     if (!batch || !name.trim()) return;
+    if (!window.confirm(`¿Guardar “${name.trim()}” en Mis bases? Podrás abrirla y continuarla después.`)) return;
     setSaving(true); setMessage(null);
     try {
       const { start, records } = serializeBatch(batch, name);
