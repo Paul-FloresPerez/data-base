@@ -6,6 +6,7 @@ import { LogoutButton } from "@/components/logout-button";
 
 export const workspaceModules = [
   { id: "dashboard", label: "Dashboard", pending: false },
+  { id: "bases", label: "Mis bases", pending: false },
   { id: "importacion", label: "Importación", pending: false },
   { id: "limpieza", label: "Limpieza", pending: false },
   { id: "enriquecimiento", label: "Enriquecimiento", pending: false },
@@ -117,7 +118,7 @@ export function AppShell({ activeModule, batch, children, onNavigate, onStartNew
 
         <div className="mt-auto border-t border-slate-800 px-2 pt-4 text-xs leading-5 text-slate-400">
           <p className="font-medium text-slate-300">Procesamiento local</p>
-          <p>La base activa solo vive en esta sesión.</p>
+          <p>Guarda una copia cuando quieras desde Mis bases.</p>
         </div>
       </aside>
 
