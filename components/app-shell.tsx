@@ -7,6 +7,7 @@ import { LogoutButton } from "@/components/logout-button";
 export const workspaceModules = [
   { id: "dashboard", label: "Dashboard", pending: false },
   { id: "bases", label: "Mis bases", pending: false },
+  { id: "reciclaje", label: "Reciclaje", pending: false },
   { id: "importacion", label: "Importación", pending: false },
   { id: "limpieza", label: "Limpieza", pending: false },
   { id: "enriquecimiento", label: "Enriquecimiento", pending: false },

@@ -10,6 +10,7 @@ import { DataTable } from "@/components/data-table";
 import { DistributionWorkspace } from "@/components/distribution-workspace";
 import { ExportWorkspace } from "@/components/export-workspace";
 import { SavedBasesPanel } from "@/components/saved-bases-panel";
+import { RecyclingWorkspace } from "@/components/recycling-workspace";
 import { StatusCard } from "@/components/status-card";
 import { buildCampaignReport, campaignOperators, type CampaignFilters, type CampaignOperatorId } from "@/lib/campaigns/campaign-engine";
 import { cleanDataset } from "@/lib/excel/cleaning";
@@ -525,6 +526,8 @@ export function ExcelWorkspace() {
     moduleContent = renderDistributionModule();
   } else if (activeModule === "exportacion") {
     moduleContent = renderExportModule();
+  } else if (activeModule === "reciclaje") {
+    moduleContent = <RecyclingWorkspace onCreate={(recycled) => { setBatch(recycled); setEnrichmentMode("preserve"); setError(null); navigate("campanas"); }} />;
   } else {
     moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setEnrichmentMode("preserve"); setError(null); }} onNavigate={() => navigate("dashboard")} />;
   }
