@@ -4,6 +4,7 @@ import { getAccessDecision } from "../lib/auth/access-control.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
 import { cleanDataset } from "../lib/excel/cleaning.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
+import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
 
 const dataset = { fileName: "clientes.xlsx", columns: ["Móvil", "CP", "Nombre"], columnMapping: { movil: 0, nombre: 2, enriched: {} }, records: [
   { sourceRow: 2, cells: ["612345678", "01234", "Ana"], mobile: "612345678", document: "", name: "Ana", contactPhone: "" },
@@ -32,4 +33,14 @@ test("el guardado separa peticiones y conserva un UUID estable en reintentos", (
 test("las rutas de bases rechazan acceso anónimo", () => {
   assert.equal(getAccessDecision({ isAuthenticated: false, pathname: "/api/bases", search: "" }).type, "unauthorized");
   assert.equal(getAccessDecision({ isAuthenticated: false, pathname: "/api/bases/id/registros", search: "" }).type, "unauthorized");
+});
+
+test("restaura una base reciclada sin volver a incluir su historial en la operación", () => {
+  const analysis = analyzeRecyclingFiles([{ fileName: "crm.xlsx", columns: ["Telefono Movil", "Tipificacion"], rows: [["612345678", "NO RESPONDE"], ["712345678", "AGENDADO"]] }]);
+  const batch = recyclingToBatch(analysis, new Set(["NO RESPONDE"]));
+  const { start, records } = serializeBatch(batch, "Reciclada");
+  const restored = restoreBatch({ id: start.id, name: start.name, createdAt: batch.createdAt, metadata: { ...start.metadata, completed: true, revision: null }, records: records.map((record, index) => ({ ...record, id: String(index) })) });
+  assert.equal(restored.kind, "RECICLADA");
+  assert.equal(restored.dataset.records.length, 1);
+  assert.equal(restored.recyclingHistory?.records.length, 1);
 });

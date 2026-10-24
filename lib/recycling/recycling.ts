@@ -49,12 +49,15 @@ export function analyzeRecyclingFiles(inputs: { fileName: string; sheetName?: st
 }
 
 export function recyclingToBatch(analysis: RecyclingAnalysis, selectedTipifications: Set<string>): WorkingBatch {
-  const records = analysis.records.map((record) => ({ sourceRow: record.sourceRow, cells: [...record.cells, record.fileName, record.sheetName, String(record.originRow), record.mobile, "CRM", record.bucket, record.reviewReason ?? ""], mobile: record.mobile, document: "", name: "", contactPhone: "" }));
-  const selected = new Set(analysis.winners.filter((record) => record.bucket !== "bloqueado" && selectedTipifications.has(record.tipification)).map((record) => record.sourceRow));
-  const dataset: ImportedDataset = { fileName: "BASE_RECICLADA.xlsx", columns: analysis.columns, columnMapping: { movil: analysis.columns.indexOf("Móvil normalizado"), enriched: {} }, records };
+  const toImportedRecord = (record: RecyclingRecord) => ({ sourceRow: record.sourceRow, cells: [...record.cells, record.fileName, record.sheetName, String(record.originRow), record.mobile, "CRM", record.bucket, record.reviewReason ?? ""], mobile: record.mobile, document: "", name: "", contactPhone: "" });
+  const selected = analysis.winners.filter((record) => record.bucket !== "bloqueado" && selectedTipifications.has(record.tipification));
+  const selectedRows = new Set(selected.map((record) => record.sourceRow));
+  const dataset: ImportedDataset = { fileName: "BASE_RECICLADA.xlsx", columns: analysis.columns, columnMapping: { movil: analysis.columns.indexOf("Móvil normalizado"), enriched: {} }, records: selected.map(toImportedRecord) };
   const batch = createWorkingBatch(dataset);
-  batch.provenanceBySourceRow = Object.fromEntries(records.map((record) => [record.sourceRow, "CRM"]));
-  batch.cleaning = { validRecords: records.filter((record) => selected.has(record.sourceRow)).map((record) => ({ ...record, normalizedMobile: record.mobile } as ValidRecord)), excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 } };
+  batch.kind = "RECICLADA";
+  batch.provenanceBySourceRow = Object.fromEntries(analysis.records.map((record) => [record.sourceRow, "CRM"]));
+  batch.recyclingHistory = { ...dataset, records: analysis.records.filter((record) => !selectedRows.has(record.sourceRow)).map(toImportedRecord) };
+  batch.cleaning = { validRecords: dataset.records.map((record) => ({ ...record, normalizedMobile: record.mobile } as ValidRecord)), excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 } };
   batch.enrichmentOutput = { columns: dataset.columns, rows: batch.cleaning.validRecords.map((record) => ({ sourceRow: record.sourceRow, cells: record.cells })) };
   batch.distribution = defaultDistributionSettings(); return batch;
 }

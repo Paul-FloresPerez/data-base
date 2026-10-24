@@ -15,6 +15,7 @@ import {
   type GeographicFilters,
 } from "@/lib/campaigns/campaign-engine";
 import type { EnrichmentOutput } from "@/lib/excel/types";
+import type { BatchSummary } from "@/lib/workspace/batch";
 
 interface CampaignEngineProps {
   filters: CampaignFilters;
@@ -24,6 +25,7 @@ interface CampaignEngineProps {
   onSelectedCampaignsChange: (campaigns: CampaignOperatorId[]) => void;
   output: EnrichmentOutput;
   selectedCampaigns: CampaignOperatorId[];
+  batch: BatchSummary;
 }
 
 function CampaignSummaryCard({
@@ -58,7 +60,7 @@ function CampaignSummaryCard({
   );
 }
 
-export function CampaignEngine({ filters, onBack, onContinue, onFiltersChange, onSelectedCampaignsChange, output, selectedCampaigns }: CampaignEngineProps) {
+export function CampaignEngine({ batch, filters, onBack, onContinue, onFiltersChange, onSelectedCampaignsChange, output, selectedCampaigns }: CampaignEngineProps) {
   const [activeCampaignId, setActiveCampaignId] = useState<CampaignOperatorId>(campaignOperators[0]);
   const report = useMemo(() => buildCampaignReport(output, selectedCampaigns, filters), [filters, output, selectedCampaigns]);
   const activeCampaign = report.campaigns.find((campaign) => campaign.operator.id === activeCampaignId) ?? report.campaigns[0];
@@ -103,13 +105,15 @@ export function CampaignEngine({ filters, onBack, onContinue, onFiltersChange, o
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-blue-700">Segmentación comercial</p>
           <h2 id="campanas-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#10234a] sm:text-3xl">Campañas Yoigo y Vodafone</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">La elegibilidad se calcula exclusivamente con <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">operador_actual</code>. Los campos provenientes del mock continúan señalados como simulados.</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">La elegibilidad se calcula sobre los {output.rows.length} registros operativos de la base activa, usando exclusivamente <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">operador_actual</code>.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onBack} className="inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Volver a enriquecimiento</button>
           <button type="button" disabled={selectedCampaigns.length === 0} onClick={onContinue} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Preparar distribución</button>
         </div>
       </div>
+
+      <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><span className="font-semibold text-slate-900">Base activa:</span> {batch.fileName} · {batch.kind} · <span className="font-mono">{batch.id.slice(0, 8)}</span> · {batch.records} registros operativos.</p>
 
       {report.columnMapping.operador_actual === undefined ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No se encontró “Operador Actual”. Los registros filtrados se mostrarán como Sin clasificar y el filtro de operador actual no estará disponible.</p> : null}
 

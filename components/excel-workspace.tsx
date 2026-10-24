@@ -10,7 +10,7 @@ import { DataTable } from "@/components/data-table";
 import { DistributionWorkspace } from "@/components/distribution-workspace";
 import { ExportWorkspace } from "@/components/export-workspace";
 import { SavedBasesPanel } from "@/components/saved-bases-panel";
-import { RecyclingWorkspace } from "@/components/recycling-workspace";
+import { RecyclingWorkspaceV2 } from "@/components/recycling-workspace-v2";
 import { StatusCard } from "@/components/status-card";
 import { buildCampaignReport, campaignOperators, type CampaignFilters, type CampaignOperatorId } from "@/lib/campaigns/campaign-engine";
 import { cleanDataset } from "@/lib/excel/cleaning";
@@ -483,11 +483,11 @@ export function ExcelWorkspace() {
   }
 
   function renderCampaignsModule() {
-    if (!enrichmentOutput) {
+    if (!enrichmentOutput || !batch) {
       return <EmptyModuleState title="Aún no hay datos para segmentar" description="Completa la limpieza y el enriquecimiento simulado para consultar la elegibilidad por operador y los filtros geográficos." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <CampaignEngine output={enrichmentOutput} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch?.distribution.selectedCampaigns ?? []} />;
+    return <CampaignEngine batch={summarizeBatch(batch)} output={enrichmentOutput} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch.distribution.selectedCampaigns} />;
   }
 
   function renderDistributionModule() {
@@ -495,7 +495,7 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Primero completa las campañas" description="La distribución usa los registros enriquecidos y los filtros activos de las campañas para calcular los lotes." action={<PrimaryButton type="button" onClick={() => navigate("campanas")}>Ir a campañas</PrimaryButton>} />;
     }
 
-    return <DistributionWorkspace report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onContinue={() => navigate("exportacion")} />;
+    return <DistributionWorkspace batch={summarizeBatch(batch)} report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onContinue={() => navigate("exportacion")} />;
   }
 
   function renderExportModule() {
@@ -503,7 +503,8 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Completa el enriquecimiento antes de exportar" description="La exportación requiere una base válida y enriquecida. Los lotes de campañas respetarán los filtros activos cuando haya resultados disponibles." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <ExportWorkspace output={enrichmentOutput} report={campaignReport} settings={batch?.distribution ?? defaultDistributionSettings()} provenances={batch ? Object.values(batch.provenanceBySourceRow) : []} onBack={() => navigate("distribucion")} />;
+    if (!batch) return null;
+    return <ExportWorkspace batch={summarizeBatch(batch)} output={enrichmentOutput} report={campaignReport} settings={batch.distribution} provenances={Object.values(batch.provenanceBySourceRow)} onBack={() => navigate("distribucion")} />;
   }
 
   let moduleContent: ReactNode;
@@ -529,7 +530,7 @@ export function ExcelWorkspace() {
   } else if (activeModule === "exportacion") {
     moduleContent = renderExportModule();
   } else if (activeModule === "reciclaje") {
-    moduleContent = <RecyclingWorkspace onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); navigate("campanas"); }} />;
+    moduleContent = <RecyclingWorkspaceV2 onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); }} onContinue={() => navigate("campanas")} />;
   } else {
     moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onNavigate={() => navigate("dashboard")} />;
   }

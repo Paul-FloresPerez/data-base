@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { campaignOperatorDefinitions, type CampaignOperatorId, type CampaignReport } from "@/lib/campaigns/campaign-engine";
 import { buildExportPlan, MAX_BATCH_SIZE, normalizeBatchSize } from "@/lib/export/xlsx-export";
 import type { DistributionSettings } from "@/lib/workspace/batch";
+import type { BatchSummary } from "@/lib/workspace/batch";
 
 interface DistributionWorkspaceProps {
   onBack: () => void;
@@ -12,9 +13,10 @@ interface DistributionWorkspaceProps {
   onSettingsChange: (settings: DistributionSettings) => void;
   report: CampaignReport;
   settings: DistributionSettings;
+  batch: BatchSummary;
 }
 
-export function DistributionWorkspace({ onBack, onContinue, onSettingsChange, report, settings }: DistributionWorkspaceProps) {
+export function DistributionWorkspace({ batch, onBack, onContinue, onSettingsChange, report, settings }: DistributionWorkspaceProps) {
   const plan = useMemo(
     () => buildExportPlan(report, settings.selectedCampaigns, settings.batchSize),
     [report, settings.batchSize, settings.selectedCampaigns],
@@ -49,6 +51,8 @@ export function DistributionWorkspace({ onBack, onContinue, onSettingsChange, re
           <button type="button" disabled={plan.totalEligible === 0} onClick={onContinue} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Continuar a exportación</button>
         </div>
       </div>
+
+      <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><span className="font-semibold text-slate-900">Base activa:</span> {batch.fileName} · {batch.kind} · <span className="font-mono">{batch.id.slice(0, 8)}</span> · {report.filteredRecords.length} tras filtros.</p>
 
       <section className="border border-slate-200 bg-white">
         <div className="grid gap-5 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">

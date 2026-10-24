@@ -11,7 +11,7 @@ import {
   workbookToArray,
 } from "@/lib/export/xlsx-export";
 import type { EnrichmentOutput } from "@/lib/excel/types";
-import type { DistributionSettings, RecordProvenance } from "@/lib/workspace/batch";
+import type { BatchSummary, DistributionSettings, RecordProvenance } from "@/lib/workspace/batch";
 
 interface ExportWorkspaceProps {
   onBack: () => void;
@@ -19,6 +19,7 @@ interface ExportWorkspaceProps {
   report: CampaignReport;
   settings: DistributionSettings;
   provenances?: RecordProvenance[];
+  batch: BatchSummary;
 }
 
 interface ExportStatus {
@@ -36,7 +37,7 @@ function triggerDownload(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function ExportWorkspace({ onBack, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
+export function ExportWorkspace({ batch, onBack, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
   const provenanceLabel = provenances.includes("MOCK")
     ? "MOCK · DATOS SIMULADOS"
     : provenances.includes("CRM")
@@ -143,6 +144,8 @@ export function ExportWorkspace({ onBack, output, report, settings, provenances 
           <span className="inline-flex w-fit items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-900">{provenanceLabel}</span>
         </div>
       </div>
+
+      <section className="border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"><p><span className="font-semibold text-slate-900">Base:</span> {batch.fileName} · {batch.kind} · <span className="font-mono text-xs">{batch.id.slice(0, 8)}</span></p><p className="mt-1 text-xs">{plan.campaigns.map((campaign) => `${campaign.campaign.toUpperCase()}: ${campaign.eligibleCount} registros / ${campaign.batches.length} lotes`).join(" · ") || "Sin campañas seleccionadas"} · Filtros aplicados en Campañas.</p></section>
 
       {!isOutputConsistent ? <div role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">La salida enriquecida no está disponible o es inconsistente. Completa los pasos anteriores antes de exportar.</div> : null}
 

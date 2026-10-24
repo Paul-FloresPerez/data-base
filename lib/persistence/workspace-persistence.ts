@@ -3,7 +3,7 @@ import { buildCampaignReport, campaignOperators } from "../campaigns/campaign-en
 import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
-import type { DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
+import type { BatchKind, DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
 
 /** Kept below Vercel's request limit; the client sends one chunk at a time. */
 export const RECORDS_PER_REQUEST = 100;
@@ -38,6 +38,8 @@ export interface StoredMetadata {
   campaignFilters: Omit<CampaignFilters, "asOfDate"> & { asOfDate?: string };
   distribution: DistributionSettings;
   enrichmentSource: "mock" | "crm" | "excel" | "api_real" | null;
+  kind?: BatchKind;
+  operationalSourceRows?: number[];
 }
 
 export interface SaveStartPayload {
@@ -84,7 +86,8 @@ function toStoredRecords(batch: WorkingBatch): StoredRecord[] {
   const valid = new Map(batch.cleaning?.validRecords.map((record) => [record.sourceRow, record.normalizedMobile]) ?? []);
   const enriched = new Map(batch.enrichmentOutput?.rows.map((row) => [row.sourceRow, row.cells]) ?? []);
 
-  return batch.dataset.records.map((record) => {
+  const records = [...batch.dataset.records, ...(batch.recyclingHistory?.records ?? [])];
+  return records.map((record) => {
     const reason = excluded.get(record.sourceRow) ?? null;
     const normalizedMobile = valid.get(record.sourceRow) ?? null;
     return {
@@ -140,6 +143,8 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
                 ? "api_real"
                 : "excel"
           : null,
+        kind: batch.kind,
+        operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
       },
     },
     records,
@@ -174,14 +179,16 @@ export interface LoadedBase { id: string; name: string; createdAt: string; metad
 
 export function restoreBatch(base: LoadedBase): WorkingBatch {
   const records = [...base.records].sort((a, b) => a.sourceRow - b.sourceRow);
+  const operationalRows = new Set(base.metadata.operationalSourceRows ?? records.map((record) => record.sourceRow));
+  const operationalRecords = records.filter((record) => operationalRows.has(record.sourceRow));
   const dataset: ImportedDataset = {
     fileName: base.metadata.originalFileName,
     columns: [...base.metadata.columns],
     columnMapping: base.metadata.columnMapping,
-    records: records.map(({ sourceRow, cells, mobile, document, name, contactPhone }) => ({ sourceRow, cells, mobile, document, name, contactPhone })),
+    records: operationalRecords.map(({ sourceRow, cells, mobile, document, name, contactPhone }) => ({ sourceRow, cells, mobile, document, name, contactPhone })),
   };
-  const validRecords = records.filter((record) => record.tipification === "VALIDO").map(({ sourceRow, cells, mobile, document, name, contactPhone, normalizedMobile }) => ({ sourceRow, cells, mobile, document, name, contactPhone, normalizedMobile: normalizedMobile ?? "" }));
-  const excludedRecords = records.flatMap((record) => {
+  const validRecords = operationalRecords.filter((record) => record.tipification === "VALIDO").map(({ sourceRow, cells, mobile, document, name, contactPhone, normalizedMobile }) => ({ sourceRow, cells, mobile, document, name, contactPhone, normalizedMobile: normalizedMobile ?? "" }));
+  const excludedRecords = operationalRecords.flatMap((record) => {
     const reason = record.reason ?? tipificationToExclusion[record.tipification];
     return reason ? [{ sourceRow: record.sourceRow, cells: record.cells, mobile: record.mobile, document: record.document, name: record.name, contactPhone: record.contactPhone, reason }] : [];
   });
@@ -190,12 +197,14 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
   const filters = { ...base.metadata.campaignFilters, asOfDate: base.metadata.campaignFilters.asOfDate ? new Date(base.metadata.campaignFilters.asOfDate) : undefined };
   return {
     id: base.id,
+    kind: base.metadata.kind ?? "ORIGINAL",
     fileName: base.metadata.originalFileName,
     createdAt: base.createdAt,
     dataset,
-    cleaning: records.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
-    enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: records.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
+    cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
+    enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: operationalRecords.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
+    recyclingHistory: base.metadata.kind === "RECICLADA" ? { ...dataset, records: records.filter((record) => !operationalRows.has(record.sourceRow)).map(({ sourceRow, cells, mobile, document, name, contactPhone }) => ({ sourceRow, cells, mobile, document, name, contactPhone })) } : null,
     campaignFilters: filters,
     distribution: { ...base.metadata.distribution, selectedCampaigns: [...base.metadata.distribution.selectedCampaigns] as CampaignOperatorId[] },
   };

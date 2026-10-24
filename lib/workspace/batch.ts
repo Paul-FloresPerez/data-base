@@ -2,6 +2,7 @@ import { campaignOperators, type CampaignFilters, type CampaignOperatorId } from
 import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel/types.ts";
 
 export type BatchStatus = "lista_para_limpiar" | "lista_para_enriquecer" | "lista_para_distribuir";
+export type BatchKind = "ORIGINAL" | "RECICLADA";
 
 export interface DistributionSettings {
   batchSize: number;
@@ -20,13 +21,17 @@ export interface WorkingBatch {
   enrichmentOutput: EnrichmentOutput | null;
   fileName: string;
   id: string;
+  kind: BatchKind;
   provenanceBySourceRow: Record<number, RecordProvenance>;
+  /** Historical CRM managements retained for audit, never used for campaigns or export. */
+  recyclingHistory: ImportedDataset | null;
 }
 
 export interface BatchSummary {
   createdAt: string;
   fileName: string;
   id: string;
+  kind: BatchKind;
   records: number;
   status: BatchStatus;
 }
@@ -59,12 +64,14 @@ export function createWorkingBatch(
 ): WorkingBatch {
   return {
     id,
+    kind: "ORIGINAL",
     fileName: dataset.fileName,
     createdAt,
     dataset,
     cleaning: null,
     enrichmentOutput: null,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
+    recyclingHistory: null,
     campaignFilters: { ...defaultCampaignFilters },
     distribution: defaultDistributionSettings(),
   };
@@ -88,6 +95,7 @@ export function summarizeBatch(batch: WorkingBatch): BatchSummary {
     fileName: batch.fileName,
     createdAt: batch.createdAt,
     records: batch.dataset.records.length,
+    kind: batch.kind,
     status: getBatchStatus(batch),
   };
 }
