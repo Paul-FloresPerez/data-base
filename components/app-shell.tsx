@@ -130,7 +130,7 @@ export function AppShell({ activeModule, batch, children, onNavigate, onStartNew
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{batch ? "Base de trabajo activa" : "Espacio de trabajo"}</p>
               <div className="flex min-w-0 items-center gap-2">
                 <h1 className="truncate text-base font-semibold tracking-tight text-[#0f274f]">{batch ? batch.fileName : activeItem.label}</h1>
-                {batch ? <><span className={`hidden shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold sm:inline-flex ${batch.kind === "RECICLADA" ? "border border-violet-200 bg-violet-50 text-violet-800" : "border border-slate-200 bg-slate-50 text-slate-600"}`}>{batch.kind}</span><span className="hidden shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 sm:inline-flex">{batch.id.slice(0, 8)}</span></> : null}
+                {batch ? <><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${batch.kind === "RECICLADA" ? "border border-violet-200 bg-violet-50 text-violet-800" : "border border-slate-200 bg-slate-50 text-slate-600"}`}>{batch.kind}</span><span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">{batch.id.slice(0, 8)}</span></> : null}
               </div>
               {batch ? <p className="truncate text-[11px] text-slate-500">{batch.records} registros · {statusLabels[batch.status]}</p> : null}
             </div>
