@@ -9,7 +9,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --conditions=react-server --experimental-strip-types --test tests/excel-processing.test.ts tests/auth-access.test.ts tests/password-hash.test.ts tests/persistence.test.ts tests/recycling.test.ts",
+    "test": "node --conditions=react-server --experimental-strip-types --test tests/excel-processing.test.ts tests/auth-access.test.ts tests/password-hash.test.ts tests/persistence.test.ts tests/recycling.test.ts tests/real-hlr-preparation.test.ts",
     "auth:provision-admin": "node --conditions=react-server --experimental-strip-types scripts/provision-admin.ts",
     "auth:verify-admin": "node --conditions=react-server --experimental-strip-types scripts/verify-admin-user.ts",
     "auth:generate-secret": "node --experimental-strip-types scripts/create-auth-secret.ts",

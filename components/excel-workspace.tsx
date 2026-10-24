@@ -28,6 +28,8 @@ import {
   type ImportedDataset,
 } from "@/lib/excel/types";
 import { simulateHlrMnp } from "@/lib/services/mock-hlr";
+import { getPendingRealHlrRecords, getRealHlrPreview } from "@/lib/services/real-hlr-preview";
+import { prepareDisabledRealHlrQueue } from "@/lib/services/real-hlr-queue-plan";
 import { saveBatchToHistory } from "@/lib/persistence/client-base-save";
 import { buildMasterOutput } from "@/lib/export/xlsx-export";
 import {
@@ -121,6 +123,9 @@ export function ExcelWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [realHlrLimit, setRealHlrLimit] = useState("100");
+  const [realHlrBudget, setRealHlrBudget] = useState("0");
+  const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
   const [isCleaning, startCleaning] = useTransition();
   const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
   const [saveRetry, setSaveRetry] = useState(0);
@@ -181,6 +186,10 @@ export function ExcelWorkspace() {
   const visibleReasons = cleaning
     ? (Object.entries(cleaning.reasonBreakdown).filter(([, count]) => count > 0) as [ExclusionReason, number][])
     : [];
+  const realHlrPreview = useMemo(
+    () => cleaning && dataset ? getRealHlrPreview(cleaning, dataset, batch?.provenanceBySourceRow ?? {}) : null,
+    [batch?.provenanceBySourceRow, cleaning, dataset],
+  );
 
   const workflow = useMemo<WorkflowStep[]>(() => {
     const cleaningReady = Boolean(cleaning);
@@ -315,6 +324,7 @@ export function ExcelWorkspace() {
             campaignFilters: { ...defaultCampaignFilters },
             distribution: defaultDistributionSettings(),
             exportCompletedAt: null,
+            realHlrQueue: null,
           }
         : currentBatch);
       setIsOverwriteConfirmationOpen(false);
@@ -351,7 +361,7 @@ export function ExcelWorkspace() {
       });
       const nextOutput = buildEnrichmentOutput(dataset, enrichedRecords, mode);
       setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
-        ? { ...currentBatch, enrichmentOutput: nextOutput, exportCompletedAt: null, provenanceBySourceRow: { ...currentBatch.provenanceBySourceRow, ...Object.fromEntries(pending.map((record) => [record.sourceRow, "MOCK"])) } }
+        ? { ...currentBatch, enrichmentOutput: nextOutput, exportCompletedAt: null, realHlrQueue: null, provenanceBySourceRow: { ...currentBatch.provenanceBySourceRow, ...Object.fromEntries(pending.map((record) => [record.sourceRow, "MOCK"])) } }
         : currentBatch);
     } catch {
       setError("No se pudo completar la simulación local.");
@@ -371,6 +381,20 @@ export function ExcelWorkspace() {
   function handleRefreshOperators() {
     if (!cleaning || cleaning.validRecords.length === 0) return;
     setIsOverwriteConfirmationOpen(true);
+  }
+
+  function prepareRealHlrQueue() {
+    if (!batch || !cleaning || !dataset || !isRealHlrQueueConfirmed) return;
+    const maxQueries = Number(realHlrLimit);
+    const budgetLimit = Number(realHlrBudget);
+    try {
+      const records = getPendingRealHlrRecords(cleaning, dataset, batch.provenanceBySourceRow);
+      const queue = prepareDisabledRealHlrQueue({ baseId: batch.id, records, maxQueries, budgetLimit });
+      setBatch((current) => current?.id === batch.id ? { ...current, realHlrQueue: queue } : current);
+      setError(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudo preparar la cola HLR.");
+    }
   }
 
   function updateCampaignFilters(nextFilters: CampaignFilters) {
@@ -519,6 +543,7 @@ export function ExcelWorkspace() {
                 <p className="mt-1 text-xs leading-5 text-slate-500">Detectados: {existingEnrichmentFields.map((field) => enrichedFieldHeaders[field]).join(", ")}.</p>
               </div>
             ) : <p className="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">No se detectaron operadores. La salida mantendrá las columnas originales y añadirá solo los campos faltantes.</p>}
+            {realHlrPreview ? <section className="mt-5 border border-slate-200 bg-slate-50 p-4" aria-labelledby="real-hlr-title"><div className="flex items-start justify-between gap-3"><div><p id="real-hlr-title" className="text-sm font-semibold text-slate-900">Preparación HLR real</p><p className="mt-1 text-xs leading-5 text-slate-600">Proveedor deshabilitado. Esta fase no realiza consultas ni transmite móviles.</p></div><span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span></div><dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><div><dt className="text-slate-500">Válidos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.validRecords}</dd></div><div><dt className="text-slate-500">Móviles únicos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.uniqueMobiles}</dd></div><div><dt className="text-slate-500">API real previa</dt><dd className="mt-0.5 font-semibold text-emerald-800">{realHlrPreview.enrichedByRealApi}</dd></div><div><dt className="text-slate-500">Pendientes</dt><dd className="mt-0.5 font-semibold text-amber-900">{realHlrPreview.pendingQueries}</dd></div></dl>{realHlrPreview.enrichedFromExistingData > 0 ? <p className="mt-3 text-xs leading-5 text-slate-600">{realHlrPreview.enrichedFromExistingData} móviles contienen operadores de Excel o mock, sin evidencia de una consulta real; no se programan automáticamente.</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Límite futuro de consultas<input type="number" min="1" max="10000" value={realHlrLimit} onChange={(event) => setRealHlrLimit(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-700">Presupuesto máximo declarado<input type="number" min="0" step="0.01" value={realHlrBudget} onChange={(event) => setRealHlrBudget(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label></div><label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isRealHlrQueueConfirmed} onChange={(event) => setIsRealHlrQueueConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que solo quiero preparar una cola bloqueada; no autoriza consultas ni gasto.</label><SecondaryButton type="button" disabled={!isRealHlrQueueConfirmed || realHlrPreview.pendingQueries === 0} onClick={prepareRealHlrQueue} className="mt-3 w-full">Preparar cola bloqueada (sin consultas)</SecondaryButton>{batch?.realHlrQueue ? <p className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">Cola preparada: {batch.realHlrQueue.jobs.length} solicitudes máximas, estado bloqueado. Se conserva al guardar la base y no puede ejecutarse desde esta versión.</p> : null}<p className="mt-3 text-xs leading-5 text-slate-500">Faltan por documentar la autenticación, tarifas, límites, campos de respuesta y semántica de operadores/portabilidad del proveedor.</p></section> : null}
             <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><input type="checkbox" checked={isDemoMode} onChange={(event) => setIsDemoMode(event.target.checked)} className="mt-0.5 accent-amber-700" /><span><span className="font-semibold">Usar mock en modo demostración</span><span className="mt-0.5 block text-xs leading-5 text-amber-900">Genera datos simulados solo para registros pendientes; se guardarán con procedencia MOCK.</span></span></label>
             <PrimaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleSimulateEnrichment} className="mt-5 w-full">{isSimulating ? "Enriqueciendo…" : "Enriquecer base"}</PrimaryButton>
             {hasExistingEnrichment ? <SecondaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleRefreshOperators} className="mt-2 w-full">Actualizar operadores</SecondaryButton> : null}

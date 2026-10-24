@@ -1,5 +1,6 @@
 import { campaignOperators, type CampaignFilters, type CampaignOperatorId } from "../campaigns/campaign-engine.ts";
 import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel/types.ts";
+import type { RealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
 
 export type BatchStatus = "lista_para_limpiar" | "lista_para_enriquecer" | "lista_para_distribuir";
 export type BatchKind = "ORIGINAL" | "RECICLADA";
@@ -28,6 +29,8 @@ export interface WorkingBatch {
   id: string;
   kind: BatchKind;
   provenanceBySourceRow: Record<number, RecordProvenance>;
+  /** Persisted plan only. It never authorizes or executes provider requests. */
+  realHlrQueue: RealHlrQueuePlan | null;
   /** Historical CRM managements retained for audit, never used for campaigns or export. */
   recyclingHistory: ImportedDataset | null;
 }
@@ -79,6 +82,7 @@ export function createWorkingBatch(
     enrichmentOutput: null,
     exportCompletedAt: null,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
+    realHlrQueue: null,
     recyclingHistory: null,
     campaignFilters: { ...defaultCampaignFilters },
     distribution: defaultDistributionSettings(),
