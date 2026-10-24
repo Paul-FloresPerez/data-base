@@ -40,6 +40,8 @@ export interface StoredMetadata {
   enrichmentSource: "mock" | "crm" | "excel" | "api_real" | null;
   kind?: BatchKind;
   operationalSourceRows?: number[];
+  /** Client-side export was actually generated and download started. */
+  exportCompletedAt?: string | null;
 }
 
 export interface SaveStartPayload {
@@ -145,6 +147,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
           : null,
         kind: batch.kind,
         operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
+        exportCompletedAt: batch.exportCompletedAt,
       },
     },
     records,
@@ -199,10 +202,12 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     id: base.id,
     kind: base.metadata.kind ?? "ORIGINAL",
     fileName: base.metadata.originalFileName,
+    displayName: base.name,
     createdAt: base.createdAt,
     dataset,
     cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
     enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: operationalRecords.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
+    exportCompletedAt: base.metadata.exportCompletedAt ?? null,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     recyclingHistory: base.metadata.kind === "RECICLADA" ? { ...dataset, records: records.filter((record) => !operationalRows.has(record.sourceRow)).map(({ sourceRow, cells, mobile, document, name, contactPhone }) => ({ sourceRow, cells, mobile, document, name, contactPhone })) } : null,
     campaignFilters: filters,

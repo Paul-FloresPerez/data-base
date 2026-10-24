@@ -18,8 +18,12 @@ export interface WorkingBatch {
   cleaning: CleaningResult | null;
   createdAt: string;
   dataset: ImportedDataset;
+  /** User-facing name, kept apart from the immutable original file name. */
+  displayName?: string;
   distribution: DistributionSettings;
   enrichmentOutput: EnrichmentOutput | null;
+  /** Set only after an export file is successfully generated and download is initiated locally. */
+  exportCompletedAt: string | null;
   fileName: string;
   id: string;
   kind: BatchKind;
@@ -30,6 +34,7 @@ export interface WorkingBatch {
 
 export interface BatchSummary {
   createdAt: string;
+  displayName?: string;
   fileName: string;
   id: string;
   kind: BatchKind;
@@ -67,10 +72,12 @@ export function createWorkingBatch(
     id,
     kind: "ORIGINAL",
     fileName: dataset.fileName,
+    displayName: dataset.fileName.replace(/\.xlsx$/i, ""),
     createdAt,
     dataset,
     cleaning: null,
     enrichmentOutput: null,
+    exportCompletedAt: null,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
     recyclingHistory: null,
     campaignFilters: { ...defaultCampaignFilters },
@@ -94,6 +101,7 @@ export function summarizeBatch(batch: WorkingBatch): BatchSummary {
   return {
     id: batch.id,
     fileName: batch.fileName,
+    displayName: batch.displayName,
     createdAt: batch.createdAt,
     records: batch.dataset.records.length,
     kind: batch.kind,

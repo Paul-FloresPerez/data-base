@@ -17,6 +17,7 @@ import {
   buildExportPlan,
   createCampaignZip,
   createCompleteWorkbook,
+  createSingleCampaignZip,
   MAX_BATCH_SIZE,
   normalizeBatchSize,
   workbookToArray,
@@ -548,13 +549,61 @@ test("genera ZIP con carpetas y archivos de lote esperados", async () => {
   const output = exportOutput(101);
   const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
   const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
-  const zipBlob = await createCampaignZip(XLSX, new JSZip(), output.columns, plan);
+  const zipBlob = await createCampaignZip(XLSX, new JSZip(), output, plan, { baseId: "base-prueba", baseName: "Base de prueba", filters: { provincia: "Madrid" }, generatedAt: "2026-10-24T00:00:00.000Z" });
   const reopened = await JSZip.loadAsync(await zipBlob.arrayBuffer());
 
   assert.ok(reopened.file("YOIGO/LOTE_001.xlsx"));
   assert.ok(reopened.file("YOIGO/LOTE_002.xlsx"));
   assert.ok(reopened.file("VODAFONE/LOTE_001.xlsx"));
   assert.ok(reopened.file("VODAFONE/LOTE_002.xlsx"));
+  assert.ok(reopened.file("BASE_MAESTRA.xlsx"));
+  assert.ok(reopened.file("MANIFIESTO.xlsx"));
+  const master = XLSX.read(await reopened.file("BASE_MAESTRA.xlsx")!.async("arraybuffer"), { type: "array" });
+  assert.equal(XLSX.utils.sheet_to_json<string[]>(master.Sheets[master.SheetNames[0]!], { header: 1, raw: false }).length, output.rows.length + 1);
+  const manifest = XLSX.read(await reopened.file("MANIFIESTO.xlsx")!.async("arraybuffer"), { type: "array" });
+  const manifestRows = XLSX.utils.sheet_to_json<string[]>(manifest.Sheets.Resumen!, { header: 1, raw: false });
+  assert.ok(manifestRows.some((row) => row[0] === "Identificador de base" && row[1] === "base-prueba"));
+  assert.ok(manifestRows.some((row) => row[0] === "Destinatario" && row[1] === "No informado"));
+  const yoigoLot = XLSX.read(await reopened.file("YOIGO/LOTE_001.xlsx")!.async("arraybuffer"), { type: "array" });
+  const yoigoRows = XLSX.utils.sheet_to_json<string[]>(yoigoLot.Sheets.YOIGO!, { header: 1, raw: false });
+  assert.deepEqual(yoigoRows.slice(1).map((row) => row[0]), output.rows.slice(0, 100).map((row) => row.cells[0]));
+});
+
+test("el ZIP de una campaña no mezcla contactos ni incluye la base maestra", async () => {
+  const output = {
+    columns: ["Telefono Movil", "Operador Actual"],
+    rows: [
+      { sourceRow: 2, cells: ["612345678", "Orange"] },
+      { sourceRow: 3, cells: ["712345678", "Vodafone"] },
+    ],
+  };
+  const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
+  const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
+  const vodafone = plan.campaigns.find((campaign) => campaign.campaign === "vodafone");
+  assert.ok(vodafone);
+  const zipBlob = await createSingleCampaignZip(XLSX, new JSZip(), output, vodafone, { baseId: "base", baseName: "Base", filters: {}, generatedAt: "2026-10-24T00:00:00.000Z" });
+  const reopened = await JSZip.loadAsync(await zipBlob.arrayBuffer());
+  assert.equal(reopened.file("BASE_MAESTRA.xlsx"), null);
+  assert.equal(reopened.file("YOIGO/LOTE_001.xlsx"), null);
+  const lot = XLSX.read(await reopened.file("VODAFONE/LOTE_001.xlsx")!.async("arraybuffer"), { type: "array" });
+  assert.deepEqual(XLSX.utils.sheet_to_json<string[]>(lot.Sheets.VODAFONE!, { header: 1, raw: false }).slice(1).map((row) => row[0]), ["612345678"]);
+});
+
+test("distingue móviles únicos de asignaciones y declara conflictos entre campañas", () => {
+  const output = {
+    columns: ["Telefono Movil", "Operador Actual"],
+    rows: [
+      { sourceRow: 2, cells: ["612345678", "Orange"] },
+      { sourceRow: 3, cells: ["712345678", "Vodafone"] },
+    ],
+  };
+  const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
+  const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
+  assert.equal(plan.uniqueEligibleCount, 2);
+  assert.equal(plan.totalEligible, 3);
+  assert.equal(plan.conflictCount, 1);
+  assert.deepEqual(plan.campaigns.find((campaign) => campaign.campaign === "yoigo")?.batches[0]?.rows.map((row) => row.sourceRow), [2, 3]);
+  assert.deepEqual(plan.campaigns.find((campaign) => campaign.campaign === "vodafone")?.batches[0]?.rows.map((row) => row.sourceRow), [2]);
 });
 
 test("aísla cada base de trabajo y refleja el avance sin persistir datos", () => {

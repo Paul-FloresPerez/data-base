@@ -1,7 +1,7 @@
 "use client";
 
 import type { ButtonHTMLAttributes, ChangeEvent, ReactNode } from "react";
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { AppShell, type WorkflowStep, type WorkspaceModule } from "@/components/app-shell";
 import { CampaignEngine } from "@/components/campaign-engine";
@@ -28,6 +28,8 @@ import {
   type ImportedDataset,
 } from "@/lib/excel/types";
 import { simulateHlrMnp } from "@/lib/services/mock-hlr";
+import { saveBatchToHistory } from "@/lib/persistence/client-base-save";
+import { buildMasterOutput } from "@/lib/export/xlsx-export";
 import {
   createWorkingBatch,
   defaultCampaignFilters,
@@ -120,10 +122,55 @@ export function ExcelWorkspace() {
   const [isImporting, setIsImporting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [isCleaning, startCleaning] = useTransition();
+  const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
+  const [saveRetry, setSaveRetry] = useState(0);
+  const currentBatchRef = useRef<WorkingBatch | null>(null);
+  const saveInFlightRef = useRef(false);
+  const lastSavedSignatureRef = useRef<string | null>(null);
   const dataset: ImportedDataset | null = batch?.dataset ?? null;
   const cleaning: CleaningResult | null = batch?.cleaning ?? null;
   const enrichmentOutput: EnrichmentOutput | null = batch?.enrichmentOutput ?? null;
   const campaignFilters: CampaignFilters = batch?.campaignFilters ?? defaultCampaignFilters;
+  const batchSignature = useMemo(() => batch ? JSON.stringify(batch) : null, [batch]);
+
+  useEffect(() => {
+    currentBatchRef.current = batch;
+  }, [batch]);
+
+  useEffect(() => {
+    if (!batch || !batchSignature) {
+      return;
+    }
+    if (lastSavedSignatureRef.current === batchSignature) {
+      return;
+    }
+
+    const unsavedTimer = window.setTimeout(() => setSaveState("unsaved"), 0);
+    const timer = window.setTimeout(() => {
+      if (saveInFlightRef.current) return;
+      const savingBatch = currentBatchRef.current;
+      if (!savingBatch) return;
+      const savingSignature = JSON.stringify(savingBatch);
+      saveInFlightRef.current = true;
+      setSaveState("saving");
+      void saveBatchToHistory(savingBatch, savingBatch.displayName ?? savingBatch.fileName.replace(/\.xlsx$/i, ""))
+        .then(() => {
+          lastSavedSignatureRef.current = savingSignature;
+          setSaveState("saved");
+        })
+        .catch(() => setSaveState("error"))
+        .finally(() => {
+          saveInFlightRef.current = false;
+          if (currentBatchRef.current && JSON.stringify(currentBatchRef.current) !== lastSavedSignatureRef.current) {
+            setSaveRetry((current) => current + 1);
+          }
+        });
+    }, 1_500);
+    return () => {
+      window.clearTimeout(unsavedTimer);
+      window.clearTimeout(timer);
+    };
+  }, [batch, batchSignature, saveRetry]);
 
   const existingEnrichmentFields = dataset
     ? enrichedFieldOrder.filter((field) => dataset.columnMapping.enriched[field] !== undefined)
@@ -167,13 +214,17 @@ export function ExcelWorkspace() {
         id: "exportar",
         label: "Exportar",
         module: "exportacion",
-        state: enrichmentReady && activeModule === "exportacion" ? "current" : "pending",
+        state: batch?.exportCompletedAt ? "complete" : enrichmentReady && activeModule === "exportacion" ? "current" : "pending",
       },
     ];
-  }, [activeModule, cleaning, dataset, enrichmentOutput]);
+  }, [activeModule, batch?.exportCompletedAt, cleaning, dataset, enrichmentOutput]);
   const campaignReport = useMemo(
     () => enrichmentOutput ? buildCampaignReport(enrichmentOutput, campaignOperators, campaignFilters) : null,
     [campaignFilters, enrichmentOutput],
+  );
+  const masterOutput = useMemo(
+    () => dataset ? buildMasterOutput(dataset, enrichmentOutput) : null,
+    [dataset, enrichmentOutput],
   );
 
   async function importFile(file: File) {
@@ -261,6 +312,7 @@ export function ExcelWorkspace() {
             enrichmentOutput: null,
             campaignFilters: { ...defaultCampaignFilters },
             distribution: defaultDistributionSettings(),
+            exportCompletedAt: null,
           }
         : currentBatch);
       setIsOverwriteConfirmationOpen(false);
@@ -297,7 +349,7 @@ export function ExcelWorkspace() {
       });
       const nextOutput = buildEnrichmentOutput(dataset, enrichedRecords, mode);
       setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
-        ? { ...currentBatch, enrichmentOutput: nextOutput, provenanceBySourceRow: { ...currentBatch.provenanceBySourceRow, ...Object.fromEntries(pending.map((record) => [record.sourceRow, "MOCK"])) } }
+        ? { ...currentBatch, enrichmentOutput: nextOutput, exportCompletedAt: null, provenanceBySourceRow: { ...currentBatch.provenanceBySourceRow, ...Object.fromEntries(pending.map((record) => [record.sourceRow, "MOCK"])) } }
         : currentBatch);
     } catch {
       setError("No se pudo completar la simulación local.");
@@ -320,17 +372,17 @@ export function ExcelWorkspace() {
   }
 
   function updateCampaignFilters(nextFilters: CampaignFilters) {
-    setBatch((currentBatch) => currentBatch ? { ...currentBatch, campaignFilters: nextFilters } : currentBatch);
+    setBatch((currentBatch) => currentBatch ? { ...currentBatch, exportCompletedAt: null, campaignFilters: nextFilters } : currentBatch);
   }
 
   function updateSelectedCampaigns(selectedCampaigns: CampaignOperatorId[]) {
     setBatch((currentBatch) => currentBatch
-      ? { ...currentBatch, distribution: { ...currentBatch.distribution, selectedCampaigns } }
+      ? { ...currentBatch, exportCompletedAt: null, distribution: { ...currentBatch.distribution, selectedCampaigns } }
       : currentBatch);
   }
 
   function updateDistribution(settings: DistributionSettings) {
-    setBatch((currentBatch) => currentBatch ? { ...currentBatch, distribution: settings } : currentBatch);
+    setBatch((currentBatch) => currentBatch ? { ...currentBatch, exportCompletedAt: null, distribution: settings } : currentBatch);
   }
 
   function navigate(module: WorkspaceModule) {
@@ -512,7 +564,7 @@ export function ExcelWorkspace() {
     }
 
     if (!batch) return null;
-    return <ExportWorkspace batch={summarizeBatch(batch)} output={enrichmentOutput} report={campaignReport} settings={batch.distribution} provenances={Object.values(batch.provenanceBySourceRow)} onBack={() => navigate("distribucion")} />;
+    return <ExportWorkspace batch={summarizeBatch(batch)} filters={campaignFilters} masterOutput={masterOutput ?? enrichmentOutput} output={enrichmentOutput} report={campaignReport} settings={batch.distribution} provenances={Object.values(batch.provenanceBySourceRow)} onBack={() => navigate("distribucion")} onExportCompleted={() => setBatch((currentBatch) => currentBatch?.id === batch.id ? { ...currentBatch, exportCompletedAt: new Date().toISOString() } : currentBatch)} />;
   }
 
   let moduleContent: ReactNode;
@@ -540,11 +592,11 @@ export function ExcelWorkspace() {
   } else if (activeModule === "reciclaje") {
     moduleContent = <RecyclingWorkspaceV2 onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); }} onContinue={() => navigate("campanas")} />;
   } else {
-    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onNavigate={() => navigate("dashboard")} />;
+    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onSaved={(name) => setBatch((current) => current ? { ...current, displayName: name } : current)} onNavigate={() => navigate("dashboard")} />;
   }
 
   return (
-    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} workflow={workflow}>
+    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} saveState={batch ? saveState : undefined} onRetrySave={() => setSaveRetry((current) => current + 1)} workflow={workflow}>
       {error ? <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span className="font-semibold">No se pudo continuar: </span>{error}</div> : null}
       {moduleContent}
       {isNewBatchConfirmationOpen ? (

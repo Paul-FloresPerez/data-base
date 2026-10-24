@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { buildStoredLots, restoreBatch, serializeBatch, splitRecords, type LoadedBase } from "@/lib/persistence/workspace-persistence";
+import { restoreBatch, type LoadedBase } from "@/lib/persistence/workspace-persistence";
+import { saveBatchToHistory } from "@/lib/persistence/client-base-save";
 import type { WorkingBatch } from "@/lib/workspace/batch";
 
 interface SavedBaseSummary { id: string; name: string; createdAt: string; updatedAt: string; state: string; kind: "ORIGINAL" | "RECICLADA"; imported: number; valid: number; excluded: number }
@@ -12,9 +13,9 @@ async function api<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function SavedBasesPanel({ batch, onOpen, onNavigate }: { batch: WorkingBatch | null; onOpen: (batch: WorkingBatch) => void; onNavigate: () => void }) {
+export function SavedBasesPanel({ batch, onOpen, onNavigate, onSaved }: { batch: WorkingBatch | null; onOpen: (batch: WorkingBatch) => void; onNavigate: () => void; onSaved?: (name: string) => void }) {
   const [bases, setBases] = useState<SavedBaseSummary[]>([]);
-  const [name, setName] = useState(batch?.fileName.replace(/\.xlsx$/i, "") ?? "");
+  const [name, setName] = useState(batch?.displayName ?? batch?.fileName.replace(/\.xlsx$/i, "") ?? "");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -40,10 +41,8 @@ export function SavedBasesPanel({ batch, onOpen, onNavigate }: { batch: WorkingB
     if (!window.confirm(`¿Guardar “${name.trim()}” en Mis bases? Podrás abrirla y continuarla después.`)) return;
     setSaving(true); setMessage(null);
     try {
-      const { start, records } = serializeBatch(batch, name);
-      await api("/api/bases", { method: "POST", body: JSON.stringify(start) });
-      for (const chunk of splitRecords(records)) await api(`/api/bases/${start.id}/registros`, { method: "POST", body: JSON.stringify({ revision: start.revision, records: chunk }) });
-      await api(`/api/bases/${start.id}/finalizar`, { method: "POST", body: JSON.stringify({ revision: start.revision, lots: buildStoredLots(batch) }) });
+      await saveBatchToHistory({ ...batch, displayName: name.trim() }, name);
+      onSaved?.(name.trim());
       setMessage("Base guardada en el historial.");
       await refresh();
     } catch (error) { setMessage(error instanceof Error ? error.message : "No se pudo guardar la base."); } finally { setSaving(false); }

@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 
-import type { CampaignOperatorId, CampaignReport } from "@/lib/campaigns/campaign-engine";
+import type { CampaignFilters, CampaignOperatorId, CampaignReport } from "@/lib/campaigns/campaign-engine";
 import {
   buildExportPlan,
   createCampaignZip,
   createCompleteWorkbook,
+  createSingleCampaignZip,
   createXlsxWorkbook,
   workbookToArray,
 } from "@/lib/export/xlsx-export";
@@ -15,11 +16,14 @@ import type { BatchSummary, DistributionSettings, RecordProvenance } from "@/lib
 
 interface ExportWorkspaceProps {
   onBack: () => void;
+  onExportCompleted: () => void;
   output: EnrichmentOutput;
+  masterOutput: EnrichmentOutput;
   report: CampaignReport;
   settings: DistributionSettings;
   provenances?: RecordProvenance[];
   batch: BatchSummary;
+  filters: CampaignFilters;
 }
 
 interface ExportStatus {
@@ -37,7 +41,7 @@ function triggerDownload(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function ExportWorkspace({ batch, onBack, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
+export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExportCompleted, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
   const provenanceLabel = provenances.includes("MOCK")
     ? "MOCK · DATOS SIMULADOS"
     : provenances.includes("CRM")
@@ -71,12 +75,13 @@ export function ExportWorkspace({ batch, onBack, output, report, settings, prove
     try {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       const xlsx = await import("xlsx");
-      const workbook = createCompleteWorkbook(xlsx, output);
+      const workbook = createCompleteWorkbook(xlsx, masterOutput);
       const bytes = workbookToArray(xlsx, workbook);
       triggerDownload(
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         "BASE_COMPLETA_ENRIQUECIDA.xlsx",
       );
+      onExportCompleted();
       setStatus({ message: "Base completa preparada para descargar.", tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el Excel completo.", tone: "error" });
@@ -95,13 +100,42 @@ export function ExportWorkspace({ batch, onBack, output, report, settings, prove
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       const [xlsx, jszip] = await Promise.all([import("xlsx"), import("jszip")]);
       const zip = new jszip.default();
-      const zipBlob = await createCampaignZip(xlsx, zip, output.columns, plan, (completed, total) => {
+      const zipBlob = await createCampaignZip(xlsx, zip, masterOutput, plan, {
+        baseId: batch.id,
+        baseName: batch.displayName ?? batch.fileName,
+        filters,
+        generatedAt: new Date().toISOString(),
+      }, (completed, total) => {
         setStatus({ message: "Generando ZIP local…", progress: `${completed} de ${total} lotes`, tone: "progress" });
       });
       triggerDownload(zipBlob, "CAMPANAS_YOIGO_VODAFONE.zip");
+      onExportCompleted();
       setStatus({ message: "ZIP preparado para descargar.", tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el ZIP de campañas.", tone: "error" });
+    }
+  }
+
+  async function downloadCampaign(campaignId: CampaignOperatorId) {
+    const campaign = plan.campaigns.find((item) => item.campaign === campaignId);
+    if (!campaign || !campaign.batches.length || !isOutputConsistent) {
+      setStatus({ message: "La campaña solicitada no contiene lotes exportables.", tone: "error" });
+      return;
+    }
+    setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `0 de ${campaign.batches.length} lotes`, tone: "progress" });
+    try {
+      const [xlsx, jszip] = await Promise.all([import("xlsx"), import("jszip")]);
+      const zipBlob = await createSingleCampaignZip(xlsx, new jszip.default(), output, campaign, {
+        baseId: batch.id,
+        baseName: batch.displayName ?? batch.fileName,
+        filters,
+        generatedAt: new Date().toISOString(),
+      }, (completed, total) => setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `${completed} de ${total} lotes`, tone: "progress" }));
+      triggerDownload(zipBlob, `${campaign.folderName}_LOTES.xlsx.zip`);
+      onExportCompleted();
+      setStatus({ message: `ZIP de ${campaign.folderName} preparado para descargar.`, tone: "success" });
+    } catch {
+      setStatus({ message: `No se pudo generar el ZIP de ${campaign.folderName}.`, tone: "error" });
     }
   }
 
@@ -125,6 +159,7 @@ export function ExportWorkspace({ batch, onBack, output, report, settings, prove
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         `${campaign.folderName}_${batch.fileName}`,
       );
+      onExportCompleted();
       setStatus({ message: `${campaign.folderName}/${batch.fileName} preparado para descargar.`, tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el lote seleccionado.", tone: "error" });
@@ -145,27 +180,29 @@ export function ExportWorkspace({ batch, onBack, output, report, settings, prove
         </div>
       </div>
 
-      <section className="border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"><p><span className="font-semibold text-slate-900">Base:</span> {batch.fileName} · {batch.kind} · <span className="font-mono text-xs">{batch.id.slice(0, 8)}</span></p><p className="mt-1 text-xs">{plan.campaigns.map((campaign) => `${campaign.campaign.toUpperCase()}: ${campaign.eligibleCount} registros / ${campaign.batches.length} lotes`).join(" · ") || "Sin campañas seleccionadas"} · Filtros aplicados en Campañas.</p></section>
+      <section className="border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"><p><span className="font-semibold text-slate-900">Base:</span> {batch.displayName ?? batch.fileName} · {batch.kind} · <span className="font-mono text-xs">{batch.id.slice(0, 8)}</span></p><p className="mt-1 text-xs">{plan.campaigns.map((campaign) => `${campaign.campaign.toUpperCase()}: ${campaign.eligibleCount} registros / ${campaign.batches.length} lotes`).join(" · ") || "Sin campañas seleccionadas"} · Filtros aplicados en Campañas.</p></section>
 
       {!isOutputConsistent ? <div role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">La salida enriquecida no está disponible o es inconsistente. Completa los pasos anteriores antes de exportar.</div> : null}
 
       <section className="overflow-hidden border border-slate-200 bg-white">
         <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="text-sm font-semibold text-slate-900">Base completa</p><p className="mt-1 text-sm text-slate-600">{output.rows.length} registros válidos y enriquecidos, con la estructura del Excel original.</p></div>
-          <button type="button" disabled={!isOutputConsistent || status.tone === "progress"} onClick={() => void downloadCompleteBase()} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#174ea6] bg-white px-3.5 text-sm font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">Descargar Excel completo</button>
+          <div><p className="text-sm font-semibold text-slate-900">Base maestra</p><p className="mt-1 text-sm text-slate-600">{masterOutput.rows.length} registros originales, incluidos los excluidos, con todas sus columnas y enriquecimiento disponible. No es una lista de campaña.</p></div>
+          <button type="button" disabled={!isOutputConsistent || status.tone === "progress"} onClick={() => void downloadCompleteBase()} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#174ea6] bg-white px-3.5 text-sm font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">Descargar BASE_MAESTRA.xlsx</button>
         </div>
       </section>
 
       <section className="overflow-hidden border border-slate-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><p className="text-sm font-semibold text-slate-900">Archivos por campaña</p><p className="mt-1 text-sm leading-6 text-slate-600">{settings.selectedCampaigns.length} campañas seleccionadas · hasta {settings.batchSize} registros por lote.</p></div>
-          <button type="button" disabled={!canExportCampaigns || status.tone === "progress"} onClick={() => void downloadZip()} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Descargar ZIP</button>
+          <div><p className="text-sm font-semibold text-slate-900">Exportación por campañas</p><p className="mt-1 text-sm leading-6 text-slate-600">Un ZIP incluye BASE_MAESTRA.xlsx, MANIFIESTO.xlsx y carpetas YOIGO/VODAFONE con lotes de hasta {settings.batchSize} registros.</p></div>
+          <button type="button" disabled={!canExportCampaigns || status.tone === "progress"} onClick={() => void downloadZip()} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Descargar ZIP de campañas</button>
         </div>
-        <div className="grid divide-y divide-slate-200 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-          <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Elegibles</p><p className="mt-1 text-xl font-semibold tabular-nums text-[#174ea6]">{plan.totalEligible}</p></div>
+        <div className="grid divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Móviles únicos</p><p className="mt-1 text-xl font-semibold tabular-nums text-[#174ea6]">{plan.uniqueEligibleCount}</p></div>
+          <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Asignaciones</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{plan.totalEligible}</p></div>
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Lotes</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{totalBatches}</p></div>
         </div>
-        {plan.campaigns.some((campaign) => campaign.batches.length > 0) ? <div className="border-t border-slate-200 px-4 py-4"><p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Descarga individual</p><div className="mt-3 flex flex-wrap gap-2">{plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => <button key={`${campaign.campaign}-${batch.index}`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadSingleBatch(campaign.campaign, batch.index)} className="min-h-8 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">{campaign.folderName}/{batch.fileName} · {batch.rows.length}</button>))}</div></div> : <p className="px-4 py-4 text-sm text-slate-500">No hay lotes preparados con los filtros y campañas actuales.</p>}
+        {plan.conflictCount > 0 ? <p role="status" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{plan.conflictCount} móviles son elegibles en más de una campaña. No hay una regla de exclusividad comercial configurada: el ZIP conserva ambas candidaturas para decisión humana, sin duplicarlos dentro de cada campaña.</p> : null}
+        {plan.campaigns.some((campaign) => campaign.batches.length > 0) ? <div className="border-t border-slate-200 px-4 py-4"><p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Descarga individual por campaña</p><div className="mt-3 flex flex-wrap gap-2">{plan.campaigns.filter((campaign) => campaign.batches.length > 0).map((campaign) => <button key={`${campaign.campaign}-zip`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadCampaign(campaign.campaign)} className="min-h-8 rounded-md border border-[#174ea6] bg-white px-2.5 text-xs font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">ZIP {campaign.folderName} · {campaign.eligibleCount} registros</button>)}{plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => <button key={`${campaign.campaign}-${batch.index}`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadSingleBatch(campaign.campaign, batch.index)} className="min-h-8 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">Descargar {campaign.folderName} · lote {batch.index} · {batch.rows.length} registros</button>))}</div></div> : <p className="px-4 py-4 text-sm text-slate-500">No hay lotes preparados con los filtros y campañas actuales.</p>}
       </section>
 
       <p aria-live="polite" className={`border px-4 py-3 text-sm ${status.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-900" : status.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : status.tone === "progress" ? "border-blue-200 bg-blue-50 text-blue-900" : "border-slate-200 bg-white text-slate-600"}`}>{status.message}{status.progress ? ` ${status.progress}.` : ""}</p>

@@ -22,6 +22,15 @@ test("serializa y recupera una base preservando los ceros y la limpieza", () => 
   assert.equal(restored.provenanceBySourceRow[2], "EXCEL");
 });
 
+test("restaura el nombre elegido y el estado de exportación guardado", () => {
+  const batch = createWorkingBatch(dataset, "11111111-1111-4111-8111-111111111112", "2026-10-22T00:00:00.000Z");
+  batch.exportCompletedAt = "2026-10-23T00:00:00.000Z";
+  const { start, records } = serializeBatch(batch, "Cierre octubre");
+  const restored = restoreBatch({ id: start.id, name: start.name, createdAt: batch.createdAt, metadata: { ...start.metadata, completed: true, revision: null }, records: records.map((record, index) => ({ ...record, id: String(index) })) });
+  assert.equal(restored.displayName, "Cierre octubre");
+  assert.equal(restored.exportCompletedAt, "2026-10-23T00:00:00.000Z");
+});
+
 test("el guardado separa peticiones y conserva un UUID estable en reintentos", () => {
   const batch = createWorkingBatch({ ...dataset, records: Array.from({ length: 201 }, (_, index) => ({ ...dataset.records[0]!, sourceRow: index + 2 })) }, "22222222-2222-4222-8222-222222222222");
   const first = serializeBatch(batch, "Base");
