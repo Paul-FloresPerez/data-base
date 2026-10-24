@@ -71,7 +71,10 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
 
 export async function listSavedBases() {
   const bases = await prisma.base.findMany({ orderBy: { actualizadoEn: "desc" }, select: { id: true, nombreOriginal: true, creadoEn: true, actualizadoEn: true, estado: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, metadatos: true } });
-  return bases.filter((base) => metadata(base.metadatos)?.completed).map((base) => ({ id: base.id, name: base.nombreOriginal, createdAt: base.creadoEn.toISOString(), updatedAt: base.actualizadoEn.toISOString(), state: base.estado, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos }));
+  return bases.flatMap((base) => {
+    const stored = metadata(base.metadatos);
+    return stored?.completed ? [{ id: base.id, name: base.nombreOriginal, createdAt: base.creadoEn.toISOString(), updatedAt: base.actualizadoEn.toISOString(), state: base.estado, kind: stored.kind ?? "ORIGINAL", imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos }] : [];
+  });
 }
 
 export async function getSavedBase(baseId: string) {

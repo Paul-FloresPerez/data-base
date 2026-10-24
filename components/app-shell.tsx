@@ -4,19 +4,14 @@ import type { ReactNode } from "react";
 import type { BatchSummary } from "@/lib/workspace/batch";
 import { LogoutButton } from "@/components/logout-button";
 
-export const workspaceModules = [
-  { id: "dashboard", label: "Dashboard", pending: false },
-  { id: "bases", label: "Mis bases", pending: false },
-  { id: "reciclaje", label: "Reciclaje", pending: false },
-  { id: "importacion", label: "Importación", pending: false },
-  { id: "limpieza", label: "Limpieza", pending: false },
-  { id: "enriquecimiento", label: "Enriquecimiento", pending: false },
-  { id: "campanas", label: "Campañas", pending: false },
-  { id: "distribucion", label: "Distribución", pending: false },
-  { id: "exportacion", label: "Exportación", pending: false },
-] as const;
+export type WorkspaceModule = "dashboard" | "bases" | "reciclaje" | "importacion" | "limpieza" | "enriquecimiento" | "campanas" | "distribucion" | "exportacion";
 
-export type WorkspaceModule = (typeof workspaceModules)[number]["id"];
+const primaryModules = [
+  { id: "dashboard", label: "Inicio", description: "Resumen y actividad" },
+  { id: "procesar", label: "Procesar base", description: "Importar, validar y exportar" },
+  { id: "bases", label: "Mis bases", description: "Historial en Neon" },
+  { id: "reciclaje", label: "Reciclaje", description: "Consolidación CRM" },
+] as const;
 
 export interface WorkflowStep {
   id: string;
@@ -30,6 +25,7 @@ interface AppShellProps {
   batch: BatchSummary | null;
   children: ReactNode;
   onNavigate: (module: WorkspaceModule) => void;
+  onOpenProcessing: () => void;
   onStartNewBatch: () => void;
   workflow: readonly WorkflowStep[];
 }
@@ -78,52 +74,34 @@ function Workflow({ onNavigate, workflow }: { onNavigate: (module: WorkspaceModu
   );
 }
 
-export function AppShell({ activeModule, batch, children, onNavigate, onStartNewBatch, workflow }: AppShellProps) {
-  const activeItem = workspaceModules.find((item) => item.id === activeModule) ?? workspaceModules[0];
+export function AppShell({ activeModule, batch, children, onNavigate, onOpenProcessing, onStartNewBatch, workflow }: AppShellProps) {
+  const isProcessing = ["importacion", "limpieza", "enriquecimiento", "campanas", "distribucion", "exportacion"].includes(activeModule);
+  const activeItem = isProcessing ? { label: "Procesar base" } : primaryModules.find((item) => item.id === activeModule) ?? primaryModules[0];
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-slate-800 bg-[#101828] px-3 py-4 text-slate-200 lg:flex">
-        <div className="flex items-center gap-3 px-2">
-          <span className="grid h-8 w-8 place-items-center rounded-md bg-[#174ea6] text-xs font-bold tracking-tight text-white">GB</span>
-          <div>
-            <p className="text-sm font-semibold text-white">Gestor de Bases</p>
-            <p className="mt-0.5 text-[11px] text-slate-400">Operaciones comerciales</p>
-          </div>
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-slate-800 bg-[#101828] px-3 py-5 text-slate-200 lg:flex">
+        <div className="border-b border-slate-800 px-3 pb-5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-blue-300">Data-base</p>
+          <p className="mt-2 text-lg font-semibold tracking-tight text-white">Operaciones de bases</p>
+          <p className="mt-1 text-xs leading-5 text-slate-400">Preparación, campañas y trazabilidad.</p>
         </div>
 
-        <p className="mt-9 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Flujo de trabajo</p>
-        <nav aria-label="Módulos" className="mt-2 space-y-0.5">
-          {workspaceModules.map((item) => {
-            const active = item.id === activeModule;
-            const itemIndex = workspaceModules.findIndex((module) => module.id === item.id) + 1;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                disabled={item.pending}
-                onClick={() => onNavigate(item.id)}
-                aria-current={active ? "page" : undefined}
-                className={`flex min-h-10 w-full items-center justify-between rounded-md px-2.5 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 disabled:cursor-not-allowed disabled:opacity-70 ${
-                  active
-                    ? "bg-[#1d4f9f] text-white"
-                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                }`}
-              >
-                <span className="flex items-center gap-3"><span className={`text-[10px] font-bold tabular-nums ${active ? "text-blue-100" : "text-slate-500"}`}>{String(itemIndex).padStart(2, "0")}</span>{item.label}</span>
-                {item.pending ? <span className="rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-semibold text-slate-300">Próximamente</span> : null}
-              </button>
-            );
+        <p className="mt-7 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Navegación</p>
+        <nav aria-label="Secciones principales" className="mt-2 space-y-1">
+          {primaryModules.map((item) => {
+            const active = item.id === "procesar" ? isProcessing : item.id === activeModule;
+            return <button key={item.id} type="button" onClick={() => item.id === "procesar" ? onOpenProcessing() : onNavigate(item.id)} aria-current={active ? "page" : undefined} className={`w-full rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 ${active ? "bg-[#1d4f9f] text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}><span className="block text-sm font-semibold">{item.label}</span><span className={`mt-0.5 block text-[11px] ${active ? "text-blue-100" : "text-slate-500"}`}>{item.description}</span></button>;
           })}
         </nav>
 
-        <div className="mt-auto border-t border-slate-800 px-2 pt-4 text-xs leading-5 text-slate-400">
-          <p className="font-medium text-slate-300">Procesamiento local</p>
-          <p>Guarda una copia cuando quieras desde Mis bases.</p>
+        <div className="mt-auto border-t border-slate-800 px-3 pt-4 text-xs leading-5 text-slate-400">
+          <p className="font-medium text-slate-300">Base aislada por sesión</p>
+          <p className="mt-1">Guarda el avance en Mis bases cuando lo necesites.</p>
         </div>
       </aside>
 
-      <div className="lg:pl-60">
+      <div className="lg:pl-64">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-2.5 backdrop-blur sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
             <div className="min-w-0">
@@ -132,18 +110,18 @@ export function AppShell({ activeModule, batch, children, onNavigate, onStartNew
                 <h1 className="truncate text-base font-semibold tracking-tight text-[#0f274f]">{batch ? batch.fileName : activeItem.label}</h1>
                 {batch ? <><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${batch.kind === "RECICLADA" ? "border border-violet-200 bg-violet-50 text-violet-800" : "border border-slate-200 bg-slate-50 text-slate-600"}`}>{batch.kind}</span><span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">{batch.id.slice(0, 8)}</span></> : null}
               </div>
-              {batch ? <p className="truncate text-[11px] text-slate-500">{batch.records} registros · {statusLabels[batch.status]}</p> : null}
+              {batch ? <p className="truncate text-[11px] text-slate-500">{batch.records} registros · {statusLabels[batch.status]} · Cambios locales</p> : null}
             </div>
             <label className="block lg:hidden">
               <span className="sr-only">Cambiar de módulo</span>
               <select
-                value={activeModule}
-                onChange={(event) => onNavigate(event.target.value as WorkspaceModule)}
+                value={isProcessing ? "procesar" : activeModule}
+                onChange={(event) => event.target.value === "procesar" ? onOpenProcessing() : onNavigate(event.target.value as WorkspaceModule)}
                 className="min-h-10 max-w-48 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
               >
-                {workspaceModules.map((item) => (
-                  <option key={item.id} value={item.id} disabled={item.pending}>
-                    {item.label}{item.pending ? " · Próximamente" : ""}
+                {primaryModules.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
                   </option>
                 ))}
               </select>

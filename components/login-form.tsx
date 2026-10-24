@@ -30,22 +30,21 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#f8fafc] px-4 py-8 text-slate-900">
-      <section className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-7 shadow-[0_18px_50px_-30px_rgba(15,39,79,0.36)] sm:p-8">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#174ea6] text-sm font-bold tracking-tight text-white">GB</span>
-          <div>
-            <p className="text-base font-semibold tracking-tight text-[#0f274f]">Gestor de Bases</p>
-            <p className="text-xs text-slate-500">Acceso de administrador</p>
-          </div>
+    <main className="min-h-screen bg-[#f7f8fa] px-4 py-6 text-slate-900 sm:grid sm:place-items-center sm:p-8">
+      <section className="mx-auto w-full max-w-[980px] overflow-hidden border border-slate-200 bg-white sm:grid sm:min-h-[560px] sm:grid-cols-[minmax(280px,0.9fr)_minmax(360px,1.1fr)]">
+        <div className="border-b border-slate-200 bg-[#10234a] px-7 py-8 text-white sm:border-b-0 sm:border-r sm:border-slate-800 sm:px-10 sm:py-11">
+          <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-200">Data-base</p>
+          <h1 className="mt-5 max-w-xs text-2xl font-semibold tracking-tight sm:text-3xl">Gestión de bases comerciales.</h1>
+          <p className="mt-4 max-w-sm text-sm leading-6 text-slate-300">Acceso privado para preparar, revisar y exportar bases de trabajo con trazabilidad.</p>
+          <p className="mt-10 hidden border-t border-slate-700 pt-4 text-xs leading-5 text-slate-400 sm:block">Las sesiones están protegidas. Los datos se procesan bajo tu cuenta de administrador.</p>
         </div>
 
-        <div className="mt-8">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">Iniciar sesión</h1>
-          <p className="mt-1 text-sm leading-6 text-slate-500">Introduce tus credenciales para continuar.</p>
-        </div>
+        <div className="px-7 py-8 sm:px-10 sm:py-11">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#174ea6]">Acceso de administrador</p>
+          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-[#10234a]">Iniciar sesión</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Introduce tus credenciales para continuar.</p>
 
-        <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+        <form className="mt-8 space-y-5" onSubmit={handleSubmit}>
           <div>
             <label className="text-sm font-medium text-slate-700" htmlFor="username">Usuario</label>
             <input
@@ -72,7 +71,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             />
           </div>
 
-          {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p> : null}
+          {error ? <p className="border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-800" role="alert">{error}</p> : null}
 
           <button
             className="inline-flex min-h-11 w-full items-center justify-center rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-wait disabled:opacity-70"
@@ -82,6 +81,8 @@ export function LoginForm({ callbackUrl }: { callbackUrl: string }) {
             {isSubmitting ? "Verificando…" : "Ingresar"}
           </button>
         </form>
+        <p className="mt-7 text-xs leading-5 text-slate-500">Acceso restringido a usuarios autorizados.</p>
+        </div>
       </section>
     </main>
   );

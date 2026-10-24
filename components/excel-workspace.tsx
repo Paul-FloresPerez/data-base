@@ -32,6 +32,7 @@ import {
   createWorkingBatch,
   defaultCampaignFilters,
   defaultDistributionSettings,
+  getProcessingModule,
   summarizeBatch,
   type DistributionSettings,
   type WorkingBatch,
@@ -336,6 +337,13 @@ export function ExcelWorkspace() {
     setActiveModule(module);
   }
 
+  function openProcessing() {
+    const current = ["importacion", "limpieza", "enriquecimiento", "campanas", "distribucion", "exportacion"].includes(activeModule)
+      ? activeModule as import("@/lib/workspace/batch").ProcessingModule
+      : null;
+    navigate(getProcessingModule(batch, current));
+  }
+
   function renderImportModule() {
     return (
       <section aria-labelledby="importacion-title" className="space-y-5">
@@ -536,7 +544,7 @@ export function ExcelWorkspace() {
   }
 
   return (
-    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onStartNewBatch={startNewBatch} workflow={workflow}>
+    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} workflow={workflow}>
       {error ? <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span className="font-semibold">No se pudo continuar: </span>{error}</div> : null}
       {moduleContent}
       {isNewBatchConfirmationOpen ? (

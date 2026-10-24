@@ -3,7 +3,7 @@ import test from "node:test";
 import { getAccessDecision } from "../lib/auth/access-control.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
 import { cleanDataset } from "../lib/excel/cleaning.ts";
-import { createWorkingBatch } from "../lib/workspace/batch.ts";
+import { createWorkingBatch, getProcessingModule } from "../lib/workspace/batch.ts";
 import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
 
 const dataset = { fileName: "clientes.xlsx", columns: ["Móvil", "CP", "Nombre"], columnMapping: { movil: 0, nombre: 2, enriched: {} }, records: [
@@ -43,4 +43,15 @@ test("restaura una base reciclada sin volver a incluir su historial en la operac
   assert.equal(restored.kind, "RECICLADA");
   assert.equal(restored.dataset.records.length, 1);
   assert.equal(restored.recyclingHistory?.records.length, 1);
+});
+
+test("la navegación principal conserva la etapa válida de la base activa", () => {
+  const batch = createWorkingBatch(dataset);
+  assert.equal(getProcessingModule(null), "importacion");
+  assert.equal(getProcessingModule(batch), "limpieza");
+  batch.cleaning = cleanDataset(dataset);
+  assert.equal(getProcessingModule(batch), "enriquecimiento");
+  batch.enrichmentOutput = { columns: dataset.columns, rows: batch.cleaning.validRecords.map((record) => ({ sourceRow: record.sourceRow, cells: record.cells })) };
+  assert.equal(getProcessingModule(batch), "campanas");
+  assert.equal(getProcessingModule(batch, "exportacion"), "exportacion");
 });

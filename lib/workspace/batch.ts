@@ -3,6 +3,7 @@ import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel
 
 export type BatchStatus = "lista_para_limpiar" | "lista_para_enriquecer" | "lista_para_distribuir";
 export type BatchKind = "ORIGINAL" | "RECICLADA";
+export type ProcessingModule = "importacion" | "limpieza" | "enriquecimiento" | "campanas" | "distribucion" | "exportacion";
 
 export interface DistributionSettings {
   batchSize: number;
@@ -98,4 +99,13 @@ export function summarizeBatch(batch: WorkingBatch): BatchSummary {
     kind: batch.kind,
     status: getBatchStatus(batch),
   };
+}
+
+/** Keeps the processing entry point stable when the user moves through primary navigation. */
+export function getProcessingModule(batch: WorkingBatch | null, current: ProcessingModule | null = null): ProcessingModule {
+  if (!batch) return "importacion";
+  if (current === "distribucion" || current === "exportacion") return current;
+  if (!batch.cleaning) return "limpieza";
+  if (!batch.enrichmentOutput) return "enriquecimiento";
+  return "campanas";
 }
