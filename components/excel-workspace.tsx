@@ -153,15 +153,17 @@ export function ExcelWorkspace() {
       const savingSignature = JSON.stringify(savingBatch);
       saveInFlightRef.current = true;
       setSaveState("saving");
+      let completed = false;
       void saveBatchToHistory(savingBatch, savingBatch.displayName ?? savingBatch.fileName.replace(/\.xlsx$/i, ""))
         .then(() => {
+          completed = true;
           lastSavedSignatureRef.current = savingSignature;
           setSaveState("saved");
         })
         .catch(() => setSaveState("error"))
         .finally(() => {
           saveInFlightRef.current = false;
-          if (currentBatchRef.current && JSON.stringify(currentBatchRef.current) !== lastSavedSignatureRef.current) {
+          if (completed && currentBatchRef.current && JSON.stringify(currentBatchRef.current) !== savingSignature) {
             setSaveRetry((current) => current + 1);
           }
         });
