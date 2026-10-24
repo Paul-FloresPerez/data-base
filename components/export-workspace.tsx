@@ -11,13 +11,14 @@ import {
   workbookToArray,
 } from "@/lib/export/xlsx-export";
 import type { EnrichmentOutput } from "@/lib/excel/types";
-import type { DistributionSettings } from "@/lib/workspace/batch";
+import type { DistributionSettings, RecordProvenance } from "@/lib/workspace/batch";
 
 interface ExportWorkspaceProps {
   onBack: () => void;
   output: EnrichmentOutput;
   report: CampaignReport;
   settings: DistributionSettings;
+  provenances?: RecordProvenance[];
 }
 
 interface ExportStatus {
@@ -35,7 +36,14 @@ function triggerDownload(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function ExportWorkspace({ onBack, output, report, settings }: ExportWorkspaceProps) {
+export function ExportWorkspace({ onBack, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
+  const provenanceLabel = provenances.includes("MOCK")
+    ? "MOCK · DATOS SIMULADOS"
+    : provenances.includes("CRM")
+      ? "CRM · REQUIERE REVISIÓN"
+      : provenances.includes("API_REAL")
+        ? "API REAL"
+        : "EXCEL · SIN HLR";
   const [status, setStatus] = useState<ExportStatus>({
     message: "Los archivos se generan y descargan únicamente desde este navegador.",
     tone: "idle",
@@ -128,11 +136,11 @@ export function ExportWorkspace({ onBack, output, report, settings }: ExportWork
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Salida local</p>
           <h2 id="exportacion-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">Exporta la base</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Los archivos conservan los encabezados y el orden originales. Las salidas HLR/MNP siguen identificadas como simuladas.</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Los archivos conservan los encabezados, el orden original y la procedencia de los registros.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onBack} className="inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Ajustar distribución</button>
-          <span className="inline-flex w-fit items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-900">SIMULADO · HLR/MNP LOCAL</span>
+          <span className="inline-flex w-fit items-center rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-900">{provenanceLabel}</span>
         </div>
       </div>
 

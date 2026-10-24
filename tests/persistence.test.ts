@@ -18,6 +18,7 @@ test("serializa y recupera una base preservando los ceros y la limpieza", () => 
   assert.equal(restored.dataset.records[0]?.cells[1], "01234");
   assert.equal(restored.cleaning?.validRecords.length, 1);
   assert.equal(restored.cleaning?.excludedRecords[0]?.reason, "telefono_fijo");
+  assert.equal(restored.provenanceBySourceRow[2], "EXCEL");
 });
 
 test("el guardado separa peticiones y conserva un UUID estable en reintentos", () => {

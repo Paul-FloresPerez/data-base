@@ -8,6 +8,9 @@ export interface DistributionSettings {
   selectedCampaigns: CampaignOperatorId[];
 }
 
+/** Source of the enrichment data for each record. It is never inferred from a UI label. */
+export type RecordProvenance = "EXCEL" | "CRM" | "MOCK" | "API_REAL";
+
 export interface WorkingBatch {
   campaignFilters: CampaignFilters;
   cleaning: CleaningResult | null;
@@ -17,6 +20,7 @@ export interface WorkingBatch {
   enrichmentOutput: EnrichmentOutput | null;
   fileName: string;
   id: string;
+  provenanceBySourceRow: Record<number, RecordProvenance>;
 }
 
 export interface BatchSummary {
@@ -60,6 +64,7 @@ export function createWorkingBatch(
     dataset,
     cleaning: null,
     enrichmentOutput: null,
+    provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
     campaignFilters: { ...defaultCampaignFilters },
     distribution: defaultDistributionSettings(),
   };

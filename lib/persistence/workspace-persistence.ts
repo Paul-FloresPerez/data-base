@@ -3,7 +3,7 @@ import { buildCampaignReport, campaignOperators } from "../campaigns/campaign-en
 import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
-import type { DistributionSettings, WorkingBatch } from "../workspace/batch.ts";
+import type { DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
 
 /** Kept below Vercel's request limit; the client sends one chunk at a time. */
 export const RECORDS_PER_REQUEST = 100;
@@ -23,6 +23,7 @@ export interface StoredRecord {
   reason: ExclusionReason | null;
   tipification: StoredTipification;
   enrichedCells: string[] | null;
+  provenance: RecordProvenance;
 }
 
 export interface StoredMetadata {
@@ -36,7 +37,7 @@ export interface StoredMetadata {
   enrichmentMode: EnrichmentMode;
   campaignFilters: Omit<CampaignFilters, "asOfDate"> & { asOfDate?: string };
   distribution: DistributionSettings;
-  enrichmentSource: "mock" | null;
+  enrichmentSource: "mock" | "crm" | "excel" | "api_real" | null;
 }
 
 export interface SaveStartPayload {
@@ -97,6 +98,7 @@ function toStoredRecords(batch: WorkingBatch): StoredRecord[] {
       reason,
       tipification: reason ? exclusionToTipification[reason] : normalizedMobile ? "VALIDO" : "PENDIENTE",
       enrichedCells: enriched.get(record.sourceRow) ? [...enriched.get(record.sourceRow)!] : null,
+      provenance: batch.provenanceBySourceRow[record.sourceRow] ?? "EXCEL",
     };
   });
 }
@@ -129,7 +131,15 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         enrichmentMode: "preserve",
         campaignFilters: toSerializableFilters(batch.campaignFilters),
         distribution: { ...batch.distribution, selectedCampaigns: [...batch.distribution.selectedCampaigns] },
-        enrichmentSource: batch.enrichmentOutput ? "mock" : null,
+        enrichmentSource: batch.enrichmentOutput
+          ? records.some((record) => record.provenance === "MOCK")
+            ? "mock"
+            : records.some((record) => record.provenance === "CRM")
+              ? "crm"
+              : records.some((record) => record.provenance === "API_REAL")
+                ? "api_real"
+                : "excel"
+          : null,
       },
     },
     records,
@@ -185,6 +195,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     dataset,
     cleaning: records.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
     enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: records.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
+    provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     campaignFilters: filters,
     distribution: { ...base.metadata.distribution, selectedCampaigns: [...base.metadata.distribution.selectedCampaigns] as CampaignOperatorId[] },
   };

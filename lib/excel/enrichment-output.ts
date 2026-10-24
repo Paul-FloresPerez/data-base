@@ -92,7 +92,7 @@ export function buildEnrichmentOutput(
 
         if (existingIndex === undefined) {
           cells.push(values[field]);
-        } else if (mode === "overwrite") {
+        } else if (mode === "overwrite" || !cells[existingIndex]?.trim()) {
           cells[existingIndex] = values[field];
         }
       }

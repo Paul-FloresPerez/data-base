@@ -21,6 +21,7 @@ import {
   enrichedFieldOrder,
   exclusionReasonLabels,
   type CleaningResult,
+  type EnrichedRecord,
   type EnrichmentMode,
   type EnrichmentOutput,
   type ExclusionReason,
@@ -109,7 +110,7 @@ export function ExcelWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>("dashboard");
   const [batch, setBatch] = useState<WorkingBatch | null>(null);
-  const [enrichmentMode, setEnrichmentMode] = useState<EnrichmentMode>("preserve");
+  const [isDemoMode, setIsDemoMode] = useState(false);
   const [isOverwriteConfirmationOpen, setIsOverwriteConfirmationOpen] = useState(false);
   const [isNewBatchConfirmationOpen, setIsNewBatchConfirmationOpen] = useState(false);
   const [isReplaceConfirmationOpen, setIsReplaceConfirmationOpen] = useState(false);
@@ -181,7 +182,7 @@ export function ExcelWorkspace() {
     try {
       const nextDataset = await importExcelFile(file);
       setBatch(createWorkingBatch(nextDataset));
-      setEnrichmentMode("preserve");
+      setIsDemoMode(false);
       setIsOverwriteConfirmationOpen(false);
       setIsReplaceConfirmationOpen(false);
       setPendingFile(null);
@@ -223,7 +224,7 @@ export function ExcelWorkspace() {
     setBatch(null);
     setPendingFile(null);
     setError(null);
-    setEnrichmentMode("preserve");
+    setIsDemoMode(false);
     setIsOverwriteConfirmationOpen(false);
     setIsNewBatchConfirmationOpen(false);
     setIsReplaceConfirmationOpen(false);
@@ -265,8 +266,12 @@ export function ExcelWorkspace() {
     });
   }
 
-  async function runSimulation() {
+  async function runSimulation(mode: EnrichmentMode) {
     if (!cleaning || !dataset || cleaning.validRecords.length === 0) {
+      return;
+    }
+    if (!isDemoMode) {
+      setError("No hay API HLR real configurada. Activa el modo demostración para usar datos mock identificados como tales.");
       return;
     }
 
@@ -275,10 +280,23 @@ export function ExcelWorkspace() {
 
     try {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
-      const simulatedRecords = simulateHlrMnp(cleaning.validRecords);
-      const nextOutput = buildEnrichmentOutput(dataset, simulatedRecords, enrichmentMode);
+      const actualIndex = dataset.columnMapping.enriched.operador_actual;
+      const originIndex = dataset.columnMapping.enriched.operador_origen;
+      const pending = mode === "overwrite"
+        ? cleaning.validRecords
+        : cleaning.validRecords.filter((record) => !record.cells[actualIndex ?? -1]?.trim() || !record.cells[originIndex ?? -1]?.trim());
+      const mocked = new Map(simulateHlrMnp(pending).map((record) => [record.sourceRow, record]));
+      const enrichedRecords: EnrichedRecord[] = cleaning.validRecords.map((record) => {
+        const existing = {
+          operador_actual: actualIndex === undefined ? "" : record.cells[actualIndex] ?? "",
+          operador_origen: originIndex === undefined ? "" : record.cells[originIndex] ?? "",
+          fecha_portabilidad: dataset.columnMapping.enriched.fecha_portabilidad === undefined ? null : record.cells[dataset.columnMapping.enriched.fecha_portabilidad] || null,
+        };
+        return { ...record, ...existing, ...(mocked.get(record.sourceRow) ?? {}) };
+      });
+      const nextOutput = buildEnrichmentOutput(dataset, enrichedRecords, mode);
       setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
-        ? { ...currentBatch, enrichmentOutput: nextOutput }
+        ? { ...currentBatch, enrichmentOutput: nextOutput, provenanceBySourceRow: { ...currentBatch.provenanceBySourceRow, ...Object.fromEntries(pending.map((record) => [record.sourceRow, "MOCK"])) } }
         : currentBatch);
     } catch {
       setError("No se pudo completar la simulación local.");
@@ -292,28 +310,12 @@ export function ExcelWorkspace() {
       return;
     }
 
-    if (hasExistingEnrichment && enrichmentMode === "overwrite") {
-      setIsOverwriteConfirmationOpen(true);
-      return;
-    }
-
-    void runSimulation();
+    void runSimulation("preserve");
   }
 
-  function handleModeChange(mode: EnrichmentMode) {
-    if (mode === enrichmentMode) {
-      return;
-    }
-
-    setEnrichmentMode(mode);
-    setBatch((currentBatch) => currentBatch
-      ? {
-          ...currentBatch,
-          enrichmentOutput: null,
-          campaignFilters: { ...defaultCampaignFilters },
-          distribution: defaultDistributionSettings(),
-        }
-      : currentBatch);
+  function handleRefreshOperators() {
+    if (!cleaning || cleaning.validRecords.length === 0) return;
+    setIsOverwriteConfirmationOpen(true);
   }
 
   function updateCampaignFilters(nextFilters: CampaignFilters) {
@@ -444,26 +446,26 @@ export function ExcelWorkspace() {
 
     return (
       <section aria-labelledby="enriquecimiento-title" className="space-y-5">
-        <ModuleHeading eyebrow="Simulación local" headingId="enriquecimiento-title" title="Enriquecimiento HLR/MNP" description="Los resultados del mock son deterministas y se muestran siempre como simulados; no se hacen llamadas externas." action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("limpieza")}>Volver a limpieza</SecondaryButton>{enrichmentOutput ? <PrimaryButton type="button" onClick={() => navigate("campanas")}>Continuar a campañas</PrimaryButton> : null}</div>} />
+        <ModuleHeading eyebrow="Enriquecimiento" headingId="enriquecimiento-title" title="Enriquecer base" description="Conserva los operadores ya informados y trata solo los registros pendientes. No hay una API HLR real configurada." action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("limpieza")}>Volver a limpieza</SecondaryButton>{enrichmentOutput ? <PrimaryButton type="button" onClick={() => navigate("campanas")}>Continuar a campañas</PrimaryButton> : null}</div>} />
         <div className="grid gap-5 xl:grid-cols-[minmax(290px,0.7fr)_minmax(0,1.3fr)]">
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <p className="text-sm font-semibold text-slate-900">Configuración</p>
-            <p className="mt-1 text-sm leading-6 text-slate-600">{countLabel(cleaning.validRecords.length, "registro válido", "registros válidos")} pueden pasar a la simulación.</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">{countLabel(cleaning.validRecords.length, "registro válido", "registros válidos")} disponibles. Los datos existentes se conservan.</p>
             {hasExistingEnrichment ? (
-              <fieldset className="mt-5 rounded-lg border border-slate-200 p-4">
-                <legend className="px-1 text-sm font-semibold text-slate-800">Campos enriquecidos existentes</legend>
+              <div className="mt-5 rounded-lg border border-slate-200 p-4">
+                <p className="text-sm font-semibold text-slate-800">Campos enriquecidos existentes</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">Detectados: {existingEnrichmentFields.map((field) => enrichedFieldHeaders[field]).join(", ")}.</p>
-                <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm text-slate-700"><input type="radio" name="enrichment-mode" checked={enrichmentMode === "preserve"} onChange={() => handleModeChange("preserve")} className="mt-0.5 accent-blue-600" /><span><span className="font-medium">Conservar datos existentes</span><span className="mt-0.5 block text-xs text-slate-500">Mantiene los valores de las columnas detectadas.</span></span></label>
-                <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm text-slate-700"><input type="radio" name="enrichment-mode" checked={enrichmentMode === "overwrite"} onChange={() => handleModeChange("overwrite")} className="mt-0.5 accent-blue-600" /><span><span className="font-medium">Sobrescribir con el mock</span><span className="mt-0.5 block text-xs text-slate-500">Solicita confirmación antes de reemplazar valores.</span></span></label>
-              </fieldset>
-            ) : <p className="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">No se detectaron campos enriquecidos. La simulación añadirá los siete campos al resultado, sin modificar el Excel original.</p>}
-            <PrimaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleSimulateEnrichment} className="mt-5 w-full">{isSimulating ? "Simulando enriquecimiento…" : "Simular enriquecimiento"}</PrimaryButton>
-            <p aria-live="polite" className="mt-3 text-xs leading-5 text-slate-500">{isSimulating ? "Procesando únicamente los registros válidos…" : "Operador y portabilidad simulados; no son datos reales."}</p>
+              </div>
+            ) : <p className="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">No se detectaron operadores. La salida mantendrá las columnas originales y añadirá solo los campos faltantes.</p>}
+            <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><input type="checkbox" checked={isDemoMode} onChange={(event) => setIsDemoMode(event.target.checked)} className="mt-0.5 accent-amber-700" /><span><span className="font-semibold">Usar mock en modo demostración</span><span className="mt-0.5 block text-xs leading-5 text-amber-900">Genera datos simulados solo para registros pendientes; se guardarán con procedencia MOCK.</span></span></label>
+            <PrimaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleSimulateEnrichment} className="mt-5 w-full">{isSimulating ? "Enriqueciendo…" : "Enriquecer base"}</PrimaryButton>
+            {hasExistingEnrichment ? <SecondaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleRefreshOperators} className="mt-2 w-full">Actualizar operadores</SecondaryButton> : null}
+            <p aria-live="polite" className="mt-3 text-xs leading-5 text-slate-500">{isSimulating ? "Procesando únicamente registros pendientes…" : "El mock no equivale a una consulta real de HLR/MNP."}</p>
             {isOverwriteConfirmationOpen ? (
               <div role="alertdialog" aria-modal="true" aria-labelledby="overwrite-title" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
                 <p id="overwrite-title" className="text-sm font-semibold text-amber-950">¿Sobrescribir campos enriquecidos?</p>
-                <p className="mt-1 text-xs leading-5 text-amber-900">Se reemplazarán únicamente los campos enriquecidos detectados con valores simulados. Las columnas originales y los demás datos no cambiarán.</p>
-                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setIsOverwriteConfirmationOpen(false)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">Cancelar</button><button type="button" onClick={() => { setIsOverwriteConfirmationOpen(false); void runSimulation(); }} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700">Confirmar y simular</button></div>
+                <p className="mt-1 text-xs leading-5 text-amber-900">Se reemplazarán los operadores con datos mock. Las columnas originales y el resto de los datos no cambiarán.</p>
+                <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setIsOverwriteConfirmationOpen(false)} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600">Cancelar</button><button type="button" onClick={() => { setIsOverwriteConfirmationOpen(false); void runSimulation("overwrite"); }} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700">Confirmar actualización</button></div>
               </div>
             ) : null}
           </section>
@@ -471,9 +473,9 @@ export function ExcelWorkspace() {
           <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div><p className="text-sm font-semibold text-slate-900">Resultados de enriquecimiento</p><p className="mt-1 text-sm text-slate-600">La salida conserva las columnas originales y su orden.</p></div>
-              <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-bold tracking-wide text-amber-900">SIMULADO · NO SON DATOS REALES</span>
+              <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-bold tracking-wide text-amber-900">PROCEDENCIA POR REGISTRO</span>
             </div>
-            {enrichmentOutput ? <div className="mt-5"><DataTable caption="Resultados simulados de HLR y MNP" columns={enrichmentOutput.columns} rows={enrichmentOutput.rows.map((record) => ({ id: `enriched-${record.sourceRow}`, cells: record.cells }))} emptyMessage="Todavía no hay resultados simulados." /></div> : <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">Cuando ejecutes la simulación, los resultados aparecerán aquí.</div>}
+            {enrichmentOutput ? <div className="mt-5"><DataTable caption="Resultados de enriquecimiento" columns={enrichmentOutput.columns} rows={enrichmentOutput.rows.map((record) => ({ id: `enriched-${record.sourceRow}`, cells: record.cells }))} emptyMessage="Todavía no hay resultados." /></div> : <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">Cuando enriquezcas la base, los resultados aparecerán aquí.</div>}
           </section>
         </div>
       </section>
@@ -501,7 +503,7 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Completa el enriquecimiento antes de exportar" description="La exportación requiere una base válida y enriquecida. Los lotes de campañas respetarán los filtros activos cuando haya resultados disponibles." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <ExportWorkspace output={enrichmentOutput} report={campaignReport} settings={batch?.distribution ?? defaultDistributionSettings()} onBack={() => navigate("distribucion")} />;
+    return <ExportWorkspace output={enrichmentOutput} report={campaignReport} settings={batch?.distribution ?? defaultDistributionSettings()} provenances={batch ? Object.values(batch.provenanceBySourceRow) : []} onBack={() => navigate("distribucion")} />;
   }
 
   let moduleContent: ReactNode;
@@ -527,9 +529,9 @@ export function ExcelWorkspace() {
   } else if (activeModule === "exportacion") {
     moduleContent = renderExportModule();
   } else if (activeModule === "reciclaje") {
-    moduleContent = <RecyclingWorkspace onCreate={(recycled) => { setBatch(recycled); setEnrichmentMode("preserve"); setError(null); navigate("campanas"); }} />;
+    moduleContent = <RecyclingWorkspace onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); navigate("campanas"); }} />;
   } else {
-    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setEnrichmentMode("preserve"); setError(null); }} onNavigate={() => navigate("dashboard")} />;
+    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onNavigate={() => navigate("dashboard")} />;
   }
 
   return (

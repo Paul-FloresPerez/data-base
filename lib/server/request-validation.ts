@@ -17,6 +17,7 @@ export function isStoredRecord(value: unknown): boolean {
   if (!value.cells.every((cell) => typeof cell === "string" && cell.length <= 20_000)) return false;
   const textFields = [value.mobile, value.document, value.name, value.contactPhone];
   if (!textFields.every((field) => typeof field === "string" && field.length <= 20_000)) return false;
+  if (!["EXCEL", "CRM", "MOCK", "API_REAL"].includes(String(value.provenance))) return false;
   if (value.normalizedMobile !== null && typeof value.normalizedMobile !== "string") return false;
   if (value.reason !== null && !["telefono_vacio", "telefono_fijo", "telefono_invalido", "nombre_vacio", "telefono_duplicado"].includes(String(value.reason))) return false;
   if (!["PENDIENTE", "VALIDO", "TELEFONO_VACIO", "TELEFONO_FIJO", "TELEFONO_INVALIDO", "NOMBRE_VACIO", "TELEFONO_DUPLICADO"].includes(String(value.tipification))) return false;
