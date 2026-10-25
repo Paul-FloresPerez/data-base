@@ -64,6 +64,14 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
   const canExportCampaigns = isOutputConsistent && settings.selectedCampaigns.length > 0 && plan.totalEligible > 0;
   const totalBatches = plan.campaigns.reduce((total, campaign) => total + campaign.batches.length, 0);
 
+  function recordExport(type: string, quantity: number, campaign: "YOIGO" | "VODAFONE" | null, lotNumber: number | null) {
+    const operationId = crypto.randomUUID();
+    const payload = { operationId, baseId: batch.id, campaign, lotId: null, lotNumber, type, quantity, filters, metadata: { baseKind: batch.kind, baseVersion: batch.createdAt } };
+    void fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "GENERADO" }) })
+      .then((response) => response.ok ? fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "DESCARGA_INICIADA" }) }) : null)
+      .catch(() => undefined);
+  }
+
   async function downloadCompleteBase() {
     if (!isOutputConsistent) {
       setStatus({ message: "No hay una base enriquecida válida para exportar.", tone: "error" });
@@ -81,6 +89,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         "BASE_COMPLETA_ENRIQUECIDA.xlsx",
       );
+      recordExport("BASE_MAESTRA", masterOutput.rows.length, null, null);
       onExportCompleted();
       setStatus({ message: "Base completa preparada para descargar.", tone: "success" });
     } catch {
@@ -109,6 +118,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         setStatus({ message: "Generando ZIP local…", progress: `${completed} de ${total} lotes`, tone: "progress" });
       });
       triggerDownload(zipBlob, "CAMPANAS_YOIGO_VODAFONE.zip");
+      recordExport("ZIP_CAMPANAS", plan.totalEligible, null, null);
       onExportCompleted();
       setStatus({ message: "ZIP preparado para descargar.", tone: "success" });
     } catch {
@@ -132,6 +142,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         generatedAt: new Date().toISOString(),
       }, (completed, total) => setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `${completed} de ${total} lotes`, tone: "progress" }));
       triggerDownload(zipBlob, `${campaign.folderName}_LOTES.xlsx.zip`);
+      recordExport("ZIP_CAMPANA", campaign.eligibleCount, campaign.folderName as "YOIGO" | "VODAFONE", null);
       onExportCompleted();
       setStatus({ message: `ZIP de ${campaign.folderName} preparado para descargar.`, tone: "success" });
     } catch {
@@ -159,6 +170,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         `${campaign.folderName}_${batch.fileName}`,
       );
+      recordExport("LOTE_XLSX", batch.rows.length, campaign.folderName as "YOIGO" | "VODAFONE", batch.index);
       onExportCompleted();
       setStatus({ message: `${campaign.folderName}/${batch.fileName} preparado para descargar.`, tone: "success" });
     } catch {

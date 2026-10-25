@@ -28,6 +28,23 @@ enum Campana {
   VODAFONE
 }
 
+enum AccionAuditoria {
+  BASE_CREADA
+  BASE_RECICLADA
+  ENRIQUECIMIENTO_APLICADO
+  CONFIGURACION_CAMPANA
+  LOTES_CREADOS
+  EXPORTACION_GENERADA
+  DESCARGA_INICIADA
+  ENTREGA_CONFIRMADA
+}
+
+enum EstadoExportacion {
+  GENERADO
+  DESCARGA_INICIADA
+  ENTREGADO_CONFIRMADO
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
   nombreOriginal      String     @map("nombre_original")
@@ -40,6 +57,8 @@ model Base {
   metadatos           Json
   registros           Registro[]
   lotes               Lote[]
+  eventosAuditoria    EventoAuditoria[]
+  exportaciones       RegistroExportacion[]
   aprobacionesHlr     AprobacionHlr[]
   destinosHlr         ConsultaHlrRegistro[]
 
@@ -104,9 +123,58 @@ model Usuario {
   passwordHash String   @map("password_hash")
   activo       Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
+  eventosAuditoria EventoAuditoria[]
+  exportaciones RegistroExportacion[]
   aprobacionesHlr AprobacionHlr[]
 
   @@map("usuarios")
+}
+
+model EventoAuditoria {
+  id           String           @id @default(uuid()) @db.Uuid
+  operacionId  String           @unique @map("operacion_id")
+  creadoEn     DateTime         @default(now()) @map("creado_en")
+  accion       AccionAuditoria
+  usuarioId    String           @map("usuario_id") @db.Uuid
+  baseId       String           @map("base_id") @db.Uuid
+  loteId       String?          @map("lote_id") @db.Uuid
+  campana      Campana?
+  cantidad     Int?
+  metadatos    Json
+  usuario      Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  base         Base             @relation(fields: [baseId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, creadoEn])
+  @@index([usuarioId, creadoEn])
+  @@index([campana, creadoEn])
+  @@index([accion, creadoEn])
+  @@map("eventos_auditoria")
+}
+
+model RegistroExportacion {
+  id                    String             @id @default(uuid()) @db.Uuid
+  operacionId           String             @unique @map("operacion_id")
+  creadoEn              DateTime           @default(now()) @map("creado_en")
+  usuarioId             String             @map("usuario_id") @db.Uuid
+  baseId                String             @map("base_id") @db.Uuid
+  loteId                String?            @map("lote_id") @db.Uuid
+  numeroLote            Int?               @map("numero_lote")
+  campana               Campana?
+  tipo                  String
+  estado                EstadoExportacion  @default(GENERADO)
+  cantidad              Int
+  filtros               Json
+  metadatos             Json
+  destinatario          String?
+  descargaIniciadaEn    DateTime?          @map("descarga_iniciada_en")
+  entregaConfirmadaEn   DateTime?          @map("entrega_confirmada_en")
+  usuario               Usuario            @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  base                  Base               @relation(fields: [baseId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, creadoEn])
+  @@index([campana, creadoEn])
+  @@index([estado, creadoEn])
+  @@map("registros_exportacion")
 }
 
 /// Shared, non-PII login throttle. `clave` is an HMAC of the normalized user.

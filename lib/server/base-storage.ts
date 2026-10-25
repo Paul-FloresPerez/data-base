@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import { enrichmentScalars, type SaveStartPayload, type SavedLot, type StoredMetadata, type StoredRecord } from "@/lib/persistence/workspace-persistence";
 import { prisma } from "@/lib/server/prisma";
+import { appendBaseLifecycleEvents } from "@/lib/server/audit-storage";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -47,8 +48,8 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
   return true;
 }
 
-export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[]) {
-  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true } });
+export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[], userId: string) {
+  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true } });
   const baseMetadata = metadata(base?.metadatos);
   if (!base || !baseMetadata || baseMetadata.revision !== revision) return false;
   const count = await prisma.registro.count({ where: { baseId } });
@@ -64,6 +65,7 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
         if (lot.sourceRows.length) await transaction.loteRegistro.createMany({ data: lot.sourceRows.map((sourceRow) => ({ loteId: created.id, registroId: byRow.get(sourceRow)! })) });
       }
       await transaction.base.update({ where: { id: baseId }, data: { metadatos: { ...baseMetadata, completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
+      await appendBaseLifecycleEvents(transaction, { baseId, userId, metadata: baseMetadata, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos, lots });
     });
   }
   return true;
