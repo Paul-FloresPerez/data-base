@@ -8,6 +8,8 @@ import { RealHlrProviderDisabledError, SozarHlrProvider, isSozarHlrExecutionEnab
 import { restoreBatch, serializeBatch } from "../lib/persistence/workspace-persistence.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
 import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
+import { cleanDataset, normalizeSpanishMobile } from "../lib/excel/cleaning.ts";
+import { InvalidSpanishMobileForHlrError, validateSpanishMobileForSozar } from "../lib/server/sozar-hlr-provider.ts";
 
 const records = [
   { sourceRow: 2, cells: ["612345678", "Ana", "", ""], mobile: "612345678", document: "", name: "Ana", contactPhone: "", normalizedMobile: "612345678" },
@@ -24,6 +26,36 @@ test("el proveedor real está bloqueado antes de cualquier transporte", async ()
   assert.deepEqual(mapDocumentedSozarResponse("612345678", { arbitrary: "value" }), { status: "documentation_required" });
 });
 
+test("solo admite móviles españoles válidos antes de llegar al proveedor", async () => {
+  assert.equal(normalizeSpanishMobile("+34 612 345 678"), "612345678");
+  assert.equal(normalizeSpanishMobile("0034-712-345-678"), "712345678");
+  assert.equal(normalizeSpanishMobile("612345678"), "612345678");
+  for (const invalid of ["912345678", "812345678", "12345678Z", "", "61234567", "6123456780"]) {
+    assert.equal(normalizeSpanishMobile(invalid), null, invalid);
+    assert.throws(() => validateSpanishMobileForSozar(invalid), InvalidSpanishMobileForHlrError);
+  }
+  await assert.rejects(new SozarHlrProvider().lookup("+34 612 345 678"), RealHlrProviderDisabledError);
+});
+
+test("la limpieza usa solo la columna móvil y separa fijos, inválidos y duplicados", () => {
+  const result = cleanDataset({
+    fileName: "formatos.xlsx",
+    columns: ["Teléfono Movil", "DNI", "Nombre"],
+    columnMapping: { movil: 0, documento: 1, nombre: 2, enriched: {} },
+    records: [
+      { sourceRow: 2, cells: ["+34 612 345 678", "X123", "Ana"], mobile: "+34 612 345 678", document: "X123", name: "Ana", contactPhone: "" },
+      { sourceRow: 3, cells: ["0034-712-345-678", "Y456", "Bea"], mobile: "0034-712-345-678", document: "Y456", name: "Bea", contactPhone: "" },
+      { sourceRow: 4, cells: ["912345678", "612345678", "Cia"], mobile: "912345678", document: "612345678", name: "Cia", contactPhone: "" },
+      { sourceRow: 5, cells: ["812345678", "Z789", "Dani"], mobile: "812345678", document: "Z789", name: "Dani", contactPhone: "" },
+      { sourceRow: 6, cells: ["12345678Z", "612345678", "Eva"], mobile: "12345678Z", document: "612345678", name: "Eva", contactPhone: "" },
+      { sourceRow: 7, cells: ["", "612345678", "Fran"], mobile: "", document: "612345678", name: "Fran", contactPhone: "" },
+      { sourceRow: 8, cells: ["612 345 678", "G012", "Gus"], mobile: "612 345 678", document: "G012", name: "Gus", contactPhone: "" },
+    ],
+  });
+  assert.deepEqual(result.validRecords.map((record) => record.normalizedMobile), ["612345678", "712345678"]);
+  assert.deepEqual(result.reasonBreakdown, { telefono_vacio: 1, telefono_fijo: 2, telefono_invalido: 1, nombre_vacio: 0, telefono_duplicado: 1 });
+});
+
 test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () => {
   const result = await new TestHlrProvider().lookup("612345678");
   assert.equal(result.source, "TEST");
@@ -34,7 +66,7 @@ test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () 
 
 test("la previsualización separa datos reales, existentes y pendientes", () => {
   const preview = getRealHlrPreview(cleaning, dataset, { 2: "EXCEL", 3: "API_REAL" });
-  assert.deepEqual(preview, { validRecords: 2, uniqueMobiles: 2, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
+  assert.deepEqual(preview, { validRecords: 2, uniqueMobiles: 2, fixedExcluded: 0, invalidExcluded: 0, duplicateExcluded: 0, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
 });
 
 test("la cola bloqueada es idempotente y se identifica por móvil normalizado", () => {
@@ -45,6 +77,7 @@ test("la cola bloqueada es idempotente y se identifica por móvil normalizado", 
   assert.equal(first.jobs[0]?.normalizedMobile, "612345678");
   assert.equal("sourceRow" in (first.jobs[0] ?? {}), false);
   assert.match(first.jobs[0]?.idempotencyKey ?? "", /sozar:v2:612345678$/);
+  assert.throws(() => prepareDisabledRealHlrQueue({ baseId: "11111111-1111-4111-8111-111111111111", records: [{ ...records[0]!, normalizedMobile: "912345678" }], maxQueries: 1, budgetLimit: 0 }), /solo admite móviles españoles/i);
 });
 
 test("los resultados futuros se vinculan por móvil normalizado y no por fila", async () => {

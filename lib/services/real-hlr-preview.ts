@@ -4,6 +4,9 @@ import type { RecordProvenance } from "../workspace/batch.ts";
 export interface RealHlrPreview {
   validRecords: number;
   uniqueMobiles: number;
+  fixedExcluded: number;
+  invalidExcluded: number;
+  duplicateExcluded: number;
   enrichedByRealApi: number;
   enrichedFromExistingData: number;
   pendingQueries: number;
@@ -36,7 +39,16 @@ export function getRealHlrPreview(
     else if (status.existing) enrichedFromExistingData += 1;
     else pendingQueries += 1;
   }
-  return { validRecords: cleaning.validRecords.length, uniqueMobiles: byMobile.size, enrichedByRealApi, enrichedFromExistingData, pendingQueries };
+  return {
+    validRecords: cleaning.validRecords.length,
+    uniqueMobiles: byMobile.size,
+    fixedExcluded: cleaning.reasonBreakdown.telefono_fijo,
+    invalidExcluded: cleaning.reasonBreakdown.telefono_vacio + cleaning.reasonBreakdown.telefono_invalido,
+    duplicateExcluded: cleaning.reasonBreakdown.telefono_duplicado,
+    enrichedByRealApi,
+    enrichedFromExistingData,
+    pendingQueries,
+  };
 }
 
 export function getPendingRealHlrRecords(

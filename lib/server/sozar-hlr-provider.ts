@@ -1,5 +1,6 @@
 import "server-only";
 
+import { normalizeSpanishMobile } from "../excel/cleaning.ts";
 import type { HlrEnrichmentResult, HlrProvider } from "../services/hlr-contract.ts";
 
 export const SOZAR_HLR_ENDPOINT_TEMPLATE = "https://apisozarusac.com/BackendJava/api/numbers/{numero}";
@@ -11,6 +12,19 @@ export class RealHlrProviderDisabledError extends Error {
   constructor() {
     super("El proveedor HLR real está deshabilitado durante la fase de preparación.");
   }
+}
+
+export class InvalidSpanishMobileForHlrError extends Error {
+  constructor() {
+    super("Sozar solo admite móviles españoles normalizados de nueve dígitos que comiencen por 6 o 7.");
+  }
+}
+
+/** Server-side guard: required again immediately before any future paid call. */
+export function validateSpanishMobileForSozar(mobile: string): string {
+  const normalizedMobile = normalizeSpanishMobile(mobile);
+  if (!normalizedMobile) throw new InvalidSpanishMobileForHlrError();
+  return normalizedMobile;
 }
 
 /**
@@ -48,9 +62,10 @@ export class SozarHlrProvider implements HlrProvider {
   readonly mode = "real" as const;
 
   async lookup(mobile: string): Promise<HlrEnrichmentResult> {
-    // This guard executes before any future transport code. There is no fetch
+    // Validation stays directly before future transport code. There is no fetch
     // in this module during preparation, so local tests cannot incur charges.
-    void mobile;
+    const normalizedMobile = validateSpanishMobileForSozar(mobile);
+    void normalizedMobile;
     if (!isSozarHlrExecutionEnabled) throw new RealHlrProviderDisabledError();
     throw new RealHlrProviderDisabledError();
   }

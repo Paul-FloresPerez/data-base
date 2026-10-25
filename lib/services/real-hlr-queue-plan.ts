@@ -1,4 +1,5 @@
-import type { ValidRecord } from "@/lib/excel/types";
+import { normalizeSpanishMobile } from "../excel/cleaning.ts";
+import type { ValidRecord } from "../excel/types.ts";
 
 export const REAL_HLR_QUEUE_VERSION = 2 as const;
 export type RealHlrQueueStatus = "PREPARADA_BLOQUEADA";
@@ -53,7 +54,14 @@ export function prepareDisabledRealHlrQueue(input: {
 }): RealHlrQueuePlan {
   if (!Number.isInteger(input.maxQueries) || input.maxQueries < 1) throw new Error("El límite de consultas debe ser mayor que cero.");
   if (!Number.isFinite(input.budgetLimit) || input.budgetLimit < 0) throw new Error("El presupuesto máximo no es válido.");
-  const uniqueMobiles = [...new Map(input.records.map((record) => [record.normalizedMobile, record])).values()].slice(0, input.maxQueries);
+  const normalizedRecords = input.records.map((record) => {
+    const normalizedMobile = normalizeSpanishMobile(record.normalizedMobile);
+    if (!normalizedMobile || normalizedMobile !== record.normalizedMobile) {
+      throw new Error("La cola HLR solo admite móviles españoles normalizados que comiencen por 6 o 7.");
+    }
+    return { ...record, normalizedMobile };
+  });
+  const uniqueMobiles = [...new Map(normalizedRecords.map((record) => [record.normalizedMobile, record])).values()].slice(0, input.maxQueries);
   return {
     version: REAL_HLR_QUEUE_VERSION,
     provider: "sozar",
