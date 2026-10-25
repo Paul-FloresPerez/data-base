@@ -10,6 +10,23 @@ import { createWorkingBatch } from "../lib/workspace/batch.ts";
 import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
 import { cleanDataset, normalizeSpanishMobile } from "../lib/excel/cleaning.ts";
 import { InvalidSpanishMobileForHlrError, validateSpanishMobileForSozar } from "../lib/server/sozar-hlr-provider.ts";
+import {
+  buildSozarRequest,
+  createServerSozarFetchTransport,
+  getSozarHttpConfigurationFromEnvironment,
+  SozarConfigurationError,
+  SozarExecutionBlockedError,
+  SozarHttpClient,
+  type SozarHttpConfiguration,
+} from "../lib/server/sozar-http-client.ts";
+import { fingerprintHlrMobile, HlrApprovalLimitError, validateHlrApprovalLimit } from "../lib/server/sozar-control-plane.ts";
+
+const sozarConfiguration: SozarHttpConfiguration = {
+  endpointTemplate: "https://apisozarusac.com/BackendJava/api/numbers/{numero}",
+  allowedHosts: ["apisozarusac.com"],
+  timeoutMs: 10_000,
+  authentication: { kind: "header", headerName: "x-test-key", secret: "test-only-secret" },
+};
 
 const records = [
   { sourceRow: 2, cells: ["612345678", "Ana", "", ""], mobile: "612345678", document: "", name: "Ana", contactPhone: "", normalizedMobile: "612345678" },
@@ -24,6 +41,52 @@ test("el proveedor real está bloqueado antes de cualquier transporte", async ()
   const source = await readFile(new URL("../lib/server/sozar-hlr-provider.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /\bfetch\s*\(/);
   assert.deepEqual(mapDocumentedSozarResponse("612345678", { arbitrary: "value" }), { status: "documentation_required" });
+});
+
+test("el cliente HTTP queda bloqueado antes del transporte y valida su configuración", async () => {
+  let transportCalls = 0;
+  const client = new SozarHttpClient(sozarConfiguration, async () => {
+    transportCalls += 1;
+    return { ok: true, status: 200, json: async () => ({}) };
+  });
+
+  const request = buildSozarRequest(sozarConfiguration, "+34 612 345 678");
+  assert.match(request.url, /\/612345678$/);
+  assert.equal(new Headers(request.init.headers).get("x-test-key"), "test-only-secret");
+  await assert.rejects(client.lookup("612345678"), SozarExecutionBlockedError);
+  assert.equal(transportCalls, 0);
+  assert.throws(() => createServerSozarFetchTransport(), SozarExecutionBlockedError);
+  assert.throws(
+    () => buildSozarRequest({ ...sozarConfiguration, endpointTemplate: "http://apisozarusac.com/{numero}" }, "612345678"),
+    SozarConfigurationError,
+  );
+  assert.throws(
+    () => buildSozarRequest({ ...sozarConfiguration, endpointTemplate: "https://untrusted.example/{numero}" }, "612345678"),
+    SozarConfigurationError,
+  );
+  assert.throws(() => buildSozarRequest(sozarConfiguration, "912345678"), InvalidSpanishMobileForHlrError);
+});
+
+test("la configuración de entorno no puede abrir la puerta de ejecución", () => {
+  const configuration = getSozarHttpConfigurationFromEnvironment();
+  assert.equal(configuration.allowedHosts.includes("apisozarusac.com"), true);
+  assert.equal(configuration.endpointTemplate.includes("{numero}"), true);
+});
+
+test("el plano de control usa huellas sin aceptar presupuestos implícitos", () => {
+  const fingerprint = fingerprintHlrMobile("0034 612 345 678", "test-hmac-secret");
+  assert.match(fingerprint, /^[A-Za-z0-9_-]{40,}$/);
+  assert.equal(fingerprint, fingerprintHlrMobile("612345678", "test-hmac-secret"));
+  assert.notEqual(fingerprint, fingerprintHlrMobile("612345678", "different-test-hmac-secret"));
+  assert.deepEqual(validateHlrApprovalLimit({ maxQueries: 1, budgetMaxCents: 25, maxCostPerQueryCents: 25 }), { maxQueries: 1, budgetMaxCents: 25, maxCostPerQueryCents: 25 });
+  assert.throws(() => validateHlrApprovalLimit({ maxQueries: 1, budgetMaxCents: 0, maxCostPerQueryCents: 0 }), HlrApprovalLimitError);
+  assert.throws(() => validateHlrApprovalLimit({ maxQueries: 2, budgetMaxCents: 20, maxCostPerQueryCents: 21 }), HlrApprovalLimitError);
+});
+
+test("la reserva persistente queda cerrada antes de tocar Prisma", async () => {
+  const source = await readFile(new URL("../lib/server/sozar-queue-repository.ts", import.meta.url), "utf8");
+  assert.ok(source.indexOf("if (!SOZAR_EXECUTION_CODE_GATE)") < source.indexOf("$queryRaw"));
+  assert.doesNotMatch(source, /INCIERTA[^]*?WHERE consulta\.estado = 'INCIERTA'/);
 });
 
 test("solo admite móviles españoles válidos antes de llegar al proveedor", async () => {

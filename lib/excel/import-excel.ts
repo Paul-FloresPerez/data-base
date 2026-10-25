@@ -16,6 +16,8 @@ const inputFieldAliases = {
 
 type InputField = keyof typeof inputFieldAliases;
 
+export const MAX_LOCAL_XLSX_BYTES = 25 * 1024 * 1024;
+
 const enrichedFieldAliases: Record<EnrichedField, readonly string[]> = {
   operador_actual: ["operadoractual"],
   operador_origen: ["operadororiginal"],
@@ -143,6 +145,9 @@ export function datasetFromWorkbook(
 export async function importExcelFile(file: File): Promise<ImportedDataset> {
   if (!file.name.toLocaleLowerCase("es-ES").endsWith(".xlsx")) {
     throw new ExcelImportError("Selecciona un archivo Excel con extensión .xlsx.");
+  }
+  if (file.size > MAX_LOCAL_XLSX_BYTES) {
+    throw new ExcelImportError("El archivo Excel supera el límite local de 25 MB.");
   }
 
   try {

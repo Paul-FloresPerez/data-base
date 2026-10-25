@@ -67,18 +67,18 @@ export const authOptions: AuthOptions = {
 
         const attemptKey = getLoginAttemptKey(username);
 
-        if (!isLoginAllowed(attemptKey)) {
+        if (!(await isLoginAllowed(attemptKey))) {
           return null;
         }
 
         const user = await verifyAdminCredentials(username, password);
 
         if (!user) {
-          recordFailedLogin(attemptKey);
+          await recordFailedLogin(attemptKey);
           return null;
         }
 
-        clearLoginAttempts(attemptKey);
+        await clearLoginAttempts(attemptKey);
 
         return {
           id: user.id,
