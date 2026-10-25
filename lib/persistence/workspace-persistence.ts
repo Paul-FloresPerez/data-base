@@ -4,7 +4,8 @@ import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
 import type { BatchKind, DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
-import type { RealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
+import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
+import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
 
 /** Kept below Vercel's request limit; the client sends one chunk at a time. */
 export const RECORDS_PER_REQUEST = 100;
@@ -43,7 +44,8 @@ export interface StoredMetadata {
   operationalSourceRows?: number[];
   /** Client-side export was actually generated and download started. */
   exportCompletedAt?: string | null;
-  realHlrQueue?: RealHlrQueuePlan | null;
+  realHlrQueue?: StoredRealHlrQueuePlan | null;
+  realHlrConsultationsByMobile?: Record<string, HlrConsultationMetadata>;
 }
 
 export interface SaveStartPayload {
@@ -151,6 +153,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
         exportCompletedAt: batch.exportCompletedAt,
         realHlrQueue: batch.realHlrQueue,
+        realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
       },
     },
     records,
@@ -213,6 +216,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     exportCompletedAt: base.metadata.exportCompletedAt ?? null,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     realHlrQueue: base.metadata.realHlrQueue ?? null,
+    realHlrConsultationsByMobile: base.metadata.realHlrConsultationsByMobile ?? {},
     recyclingHistory: base.metadata.kind === "RECICLADA" ? { ...dataset, records: records.filter((record) => !operationalRows.has(record.sourceRow)).map(({ sourceRow, cells, mobile, document, name, contactPhone }) => ({ sourceRow, cells, mobile, document, name, contactPhone })) } : null,
     campaignFilters: filters,
     distribution: { ...base.metadata.distribution, selectedCampaigns: [...base.metadata.distribution.selectedCampaigns] as CampaignOperatorId[] },

@@ -16,6 +16,7 @@ export class TestHlrProvider implements HlrProvider {
       operadorOriginal: "Operador de prueba B",
       operadorDonante: "Operador de prueba B",
       fechaPortabilidad: "2024-01-15",
+      consultedAt: "2024-01-15T00:00:00.000Z",
       source: "TEST",
     };
   }

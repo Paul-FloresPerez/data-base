@@ -9,7 +9,17 @@ export interface HlrEnrichmentResult {
   operadorOriginal: string | null;
   operadorDonante: string | null;
   fechaPortabilidad: string | null;
+  /** Set by the server when a real provider response is accepted. */
+  consultedAt: string;
   source: "API_REAL" | "TEST";
+}
+
+/** Kept alongside the base so historical Excel data is never relabelled as live data. */
+export interface HlrConsultationMetadata {
+  normalizedMobile: string;
+  provider: "sozar";
+  consultedAt: string;
+  source: "API_REAL";
 }
 
 export interface HlrProvider {

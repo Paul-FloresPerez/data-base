@@ -7,6 +7,7 @@ import { TestHlrProvider } from "../lib/services/test-hlr-provider.ts";
 import { RealHlrProviderDisabledError, SozarHlrProvider, isSozarHlrExecutionEnabled, mapDocumentedSozarResponse } from "../lib/server/sozar-hlr-provider.ts";
 import { restoreBatch, serializeBatch } from "../lib/persistence/workspace-persistence.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
+import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
 
 const records = [
   { sourceRow: 2, cells: ["612345678", "Ana", "", ""], mobile: "612345678", document: "", name: "Ana", contactPhone: "", normalizedMobile: "612345678" },
@@ -28,6 +29,7 @@ test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () 
   assert.equal(result.source, "TEST");
   assert.equal(result.operadorActual, "Operador de prueba A");
   assert.equal(result.operadorDonante, "Operador de prueba B");
+  assert.equal(result.consultedAt, "2024-01-15T00:00:00.000Z");
 });
 
 test("la previsualización separa datos reales, existentes y pendientes", () => {
@@ -35,12 +37,21 @@ test("la previsualización separa datos reales, existentes y pendientes", () => 
   assert.deepEqual(preview, { validRecords: 2, uniqueMobiles: 2, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
 });
 
-test("la cola bloqueada es idempotente y no conserva móviles", () => {
+test("la cola bloqueada es idempotente y se identifica por móvil normalizado", () => {
   const first = prepareDisabledRealHlrQueue({ baseId: "11111111-1111-4111-8111-111111111111", records, maxQueries: 100, budgetLimit: 0, preparedAt: "2026-10-23T00:00:00.000Z" });
   const second = prepareDisabledRealHlrQueue({ baseId: "11111111-1111-4111-8111-111111111111", records, maxQueries: 100, budgetLimit: 0, preparedAt: "2026-10-23T00:00:00.000Z" });
   assert.deepEqual(first.jobs, second.jobs);
   assert.equal(first.status, "PREPARADA_BLOQUEADA");
-  assert.equal(JSON.stringify(first.jobs).includes("612345678"), false);
+  assert.equal(first.jobs[0]?.normalizedMobile, "612345678");
+  assert.equal("sourceRow" in (first.jobs[0] ?? {}), false);
+  assert.match(first.jobs[0]?.idempotencyKey ?? "", /sozar:v2:612345678$/);
+});
+
+test("los resultados futuros se vinculan por móvil normalizado y no por fila", async () => {
+  const result = await new TestHlrProvider().lookup("712345678");
+  const indexed = indexHlrResultsByNormalizedMobile([result]);
+  assert.equal(linkHlrResultToRecord(records[1]!, indexed)?.mobile, "712345678");
+  assert.equal(linkHlrResultToRecord(records[0]!, indexed), null);
 });
 
 test("la cola bloqueada se conserva en el guardado de la base", () => {
