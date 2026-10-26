@@ -50,6 +50,9 @@ export interface SozarHttpResponse {
 }
 
 export type SozarHttpTransport = (url: string, init: RequestInit) => Promise<SozarHttpResponse>;
+type SozarExecutionScope = "shared-hlr" | "first-real-test";
+const firstRealTestTransportBrand = Symbol("first-real-test-transport");
+type FirstRealTestTransport = SozarHttpTransport & { [firstRealTestTransportBrand]: true };
 
 /**
  * Deliberate release gate. Environment values cannot enable billable traffic:
@@ -87,7 +90,9 @@ export function createServerSozarFetchTransport(): SozarHttpTransport {
  */
 export function createServerSozarFirstRealTestFetchTransport(): SozarHttpTransport {
   assertFirstRealSozarTestEnabled();
-  return async (url, init) => fetch(url, init);
+  const transport = (async (url: string, init: RequestInit) => fetch(url, init)) as unknown as FirstRealTestTransport;
+  Object.defineProperty(transport, firstRealTestTransportBrand, { value: true });
+  return transport;
 }
 
 function assertConfiguration(configuration: SozarHttpConfiguration) {
@@ -116,21 +121,30 @@ export function buildSozarRequest(configuration: SozarHttpConfiguration, mobile:
 export class SozarHttpClient {
   private readonly configuration: SozarHttpConfiguration;
   private readonly transport: SozarHttpTransport;
+  private readonly executionScope: SozarExecutionScope;
 
   constructor(
     configuration: SozarHttpConfiguration,
     transport: SozarHttpTransport,
+    executionScope: SozarExecutionScope = "shared-hlr",
   ) {
     this.configuration = configuration;
     this.transport = transport;
+    this.executionScope = executionScope;
   }
 
   /** Server-only raw response path for the one approved contract-inspection request. */
   async lookupRaw(mobile: string): Promise<unknown> {
     const request = buildSozarRequest(this.configuration, mobile);
-    // This is intentionally after all validation and immediately before the
-    // only possible transport invocation. It is false in committed source.
-    if (!SOZAR_EXECUTION_CODE_GATE) throw new SozarExecutionBlockedError();
+    // Immediately before the only transport invocation, require either the
+    // normal shared gate or a branded one-shot transport. A caller cannot
+    // grant itself the exceptional scope with an arbitrary transport.
+    if (this.executionScope === "first-real-test") {
+      if (!(this.transport as Partial<FirstRealTestTransport>)[firstRealTestTransportBrand]) throw new SozarExecutionBlockedError();
+      assertFirstRealSozarTestEnabled();
+    } else if (!SOZAR_EXECUTION_CODE_GATE) {
+      throw new SozarExecutionBlockedError();
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.configuration.timeoutMs);

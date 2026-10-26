@@ -36,7 +36,7 @@ export async function executeFirstRealSozarTest(input: { baseId: string; sourceR
   });
   if (!reserved) return { status: "BLOQUEADO", reason: "LIMITE_GLOBAL" } as const;
   try {
-    const raw = await new SozarHttpClient(getSozarHttpConfigurationFromEnvironment(), createServerSozarFirstRealTestFetchTransport()).lookupRaw(plan.mobile);
+    const raw = await new SozarHttpClient(getSozarHttpConfigurationFromEnvironment(), createServerSozarFirstRealTestFetchTransport(), "first-real-test").lookupRaw(plan.mobile);
     const encrypted = encryptSozarResponseForInspection(raw, configuration.encryptedResponseKey);
     const storedResponse: Prisma.InputJsonObject = { encrypted: encrypted as unknown as Prisma.InputJsonObject, shape: describeSozarResponseShape(raw) as unknown as Prisma.InputJsonValue, mapping: "documentation_required" };
     const result = await prisma.resultadoHlrReal.upsert({ where: { proveedor_huellaMovil: { proveedor: "sozar", huellaMovil: plan.mobileFingerprint } }, create: { proveedor: "sozar", huellaMovil: plan.mobileFingerprint, resultado: storedResponse, vigenteHasta: getRealHlrCacheExpiry(new Date()) }, update: { resultado: storedResponse, consultadoEn: new Date(), vigenteHasta: getRealHlrCacheExpiry(new Date()) } });

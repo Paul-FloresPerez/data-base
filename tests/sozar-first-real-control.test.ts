@@ -4,6 +4,7 @@ import { SOZAR_EXECUTION_CODE_GATE } from "../lib/server/sozar-http-client.ts";
 import { isSozarHlrExecutionEnabled } from "../lib/server/sozar-hlr-provider.ts";
 import { SOZAR_FIRST_REAL_TEST_CODE_GATE, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "../lib/server/sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "../lib/server/sozar-first-real-plan.ts";
+import { readFile } from "node:fs/promises";
 
 const input = {
   baseId: "00000000-0000-4000-8000-000000000001",
@@ -37,4 +38,14 @@ test("un límite global, caché real o estado incierto bloquean cualquier segund
   for (const existingConsultationState of ["PENDIENTE", "EN_CURSO", "EXITOSA", "INCIERTA", "FALLIDA"] as const) {
     assert.deepEqual(planFirstRealSozarTest({ ...input, existingConsultationState }), { status: "BLOQUEADO", reason: "COLA_EXISTENTE" });
   }
+});
+
+test("la vía excepcional queda limitada al ejecutor de prueba y la vía masiva continúa cerrada", async () => {
+  const client = await readFile(new URL("../lib/server/sozar-http-client.ts", import.meta.url), "utf8");
+  const executor = await readFile(new URL("../lib/server/sozar-first-real-executor.ts", import.meta.url), "utf8");
+  assert.match(client, /firstRealTestTransportBrand/);
+  assert.match(client, /executionScope === "first-real-test"/);
+  assert.match(executor, /"first-real-test"/);
+  assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
+  assert.equal(isSozarHlrExecutionEnabled, false);
 });
