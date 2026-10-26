@@ -114,7 +114,8 @@ export class SozarHttpClient {
     this.transport = transport;
   }
 
-  async lookup(mobile: string): Promise<HlrEnrichmentResult> {
+  /** Server-only raw response path for the one approved contract-inspection request. */
+  async lookupRaw(mobile: string): Promise<unknown> {
     const request = buildSozarRequest(this.configuration, mobile);
     // This is intentionally after all validation and immediately before the
     // only possible transport invocation. It is false in committed source.
@@ -125,11 +126,15 @@ export class SozarHttpClient {
     try {
       const response = await this.transport(request.url, { ...request.init, signal: controller.signal });
       if (!response.ok) throw new Error(`Sozar respondió con estado ${response.status}.`);
-      const mapped = mapDocumentedSozarResponse(validateSpanishMobileForSozar(mobile), await response.json());
-      if (mapped.status !== "mapped") throw new SozarContractPendingError();
-      return mapped.result;
+      return response.json();
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async lookup(mobile: string): Promise<HlrEnrichmentResult> {
+    const mapped = mapDocumentedSozarResponse(validateSpanishMobileForSozar(mobile), await this.lookupRaw(mobile));
+      if (mapped.status !== "mapped") throw new SozarContractPendingError();
+      return mapped.result;
   }
 }
