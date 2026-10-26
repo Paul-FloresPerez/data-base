@@ -66,7 +66,10 @@ function valuesForRecord(
   return {
     operador_actual: record.operador_actual,
     operador_origen: record.operador_origen,
-    portabilidad_desde: record.operador_origen,
+    // "Portabilidad Desde" is the donor operator when one is actually known.
+    // Legacy/mock records do not contain it, so their historical value stays
+    // compatible with the former output.
+    portabilidad_desde: record.operador_donante ?? record.operador_origen,
     fecha_portabilidad: record.fecha_portabilidad ?? "",
     ...dateParts,
   };

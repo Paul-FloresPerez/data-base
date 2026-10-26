@@ -70,6 +70,8 @@ export interface CleaningResult {
 export interface SimulatedEnrichment {
   operador_actual: string;
   operador_origen: string;
+  /** Existing workbook column "Portabilidad Desde"; populated only when documented. */
+  operador_donante?: string;
   fecha_portabilidad: string | null;
 }
 
