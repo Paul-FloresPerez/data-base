@@ -2,6 +2,11 @@ import "server-only";
 
 import { normalizeSpanishMobile } from "../excel/cleaning.ts";
 import type { HlrEnrichmentResult, HlrProvider } from "../services/hlr-contract.ts";
+import {
+  mapWithDocumentedSozarContract,
+  type DocumentedSozarMappingResult,
+  type DocumentedSozarResponseContract,
+} from "../services/sozar-response-contract.ts";
 
 export const SOZAR_HLR_ENDPOINT_TEMPLATE = "https://apisozarusac.com/BackendJava/api/numbers/{numero}";
 
@@ -31,30 +36,19 @@ export function validateSpanishMobileForSozar(mobile: string): string {
  * No supplier JSON schema was provided. This type remains empty on purpose: a
  * mapper can only be added from vendor documentation, never from guesswork.
  */
-export interface DocumentedSozarResponseMapping {
-  readonly currentOperatorPath?: readonly string[];
-  readonly originalOperatorPath?: readonly string[];
-  readonly donorOperatorPath?: readonly string[];
-  readonly portabilityDatePath?: readonly string[];
-}
-
-export type SozarMappingResult =
-  | { status: "documentation_required" }
-  | { status: "mapped"; result: HlrEnrichmentResult };
+export type DocumentedSozarResponseMapping = DocumentedSozarResponseContract;
+export type SozarMappingResult = DocumentedSozarMappingResult;
 
 /**
  * Accepts a response only after field paths have been documented and reviewed.
  * It currently never infers property names or fabricates values.
  */
 export function mapDocumentedSozarResponse(
-  _mobile: string,
-  _response: unknown,
+  mobile: string,
+  response: unknown,
   mapping: DocumentedSozarResponseMapping | null = null,
 ): SozarMappingResult {
-  if (!mapping) return { status: "documentation_required" };
-  // Field extraction intentionally remains unavailable until the supplier
-  // publishes an authenticated response example and a field contract.
-  return { status: "documentation_required" };
+  return mapWithDocumentedSozarContract(mobile, response, mapping, new Date().toISOString());
 }
 
 export class SozarHlrProvider implements HlrProvider {
