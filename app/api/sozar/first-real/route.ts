@@ -4,9 +4,8 @@ import { executeFirstRealSozarTest } from "@/lib/server/sozar-first-real-executo
 import { prisma } from "@/lib/server/prisma";
 
 /**
- * Deliberately inert administrative boundary. The eventual executor must be
- * wired only in the separately authorised release that opens all code gates.
- * It validates no mobile, performs no database write and never imports fetch.
+ * Deliberately closed administrative boundary. The executor is reachable only
+ * after a separately reviewed source release opens its dedicated gate.
  */
 export async function POST(request: Request) {
   const session = await requireAdminApi();

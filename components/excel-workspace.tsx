@@ -50,6 +50,9 @@ function maskMobile(mobile: string): string {
   return `•••••${mobile.slice(-4)}`;
 }
 
+/** A second client-side guard; server gates remain authoritative. */
+const firstRealSozarTestUiEnabled = false;
+
 function ModuleHeading({
   eyebrow,
   title,
@@ -132,6 +135,8 @@ export function ExcelWorkspace() {
   const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
   const [singleHlrTestMobile, setSingleHlrTestMobile] = useState("");
   const [isSingleHlrTestConfirmed, setIsSingleHlrTestConfirmed] = useState(false);
+  const [isExecutingSingleHlrTest, setIsExecutingSingleHlrTest] = useState(false);
+  const [singleHlrTestStatus, setSingleHlrTestStatus] = useState<string | null>(null);
   const [isCleaning, startCleaning] = useTransition();
   const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
   const [saveRetry, setSaveRetry] = useState(0);
@@ -425,6 +430,22 @@ export function ExcelWorkspace() {
     }
   }
 
+  async function executeSingleRealHlrTest() {
+    if (!firstRealSozarTestUiEnabled || !batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile) return;
+    const record = pendingRealHlrRecords.find((candidate) => candidate.normalizedMobile === singleHlrTestMobile);
+    if (!record) return setError("El móvil seleccionado ya no está pendiente.");
+    setIsExecutingSingleHlrTest(true);
+    try {
+      const response = await fetch("/api/sozar/first-real", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ baseId: batch.id, sourceRow: record.sourceRow, confirmation: "SOZAR_SINGLE_REAL_REQUEST" }) });
+      const payload = await response.json() as { status?: string; error?: string };
+      setSingleHlrTestStatus(payload.status ?? payload.error ?? "No se pudo iniciar la prueba.");
+    } catch {
+      setSingleHlrTestStatus("No se pudo contactar con el servidor de la prueba.");
+    } finally {
+      setIsExecutingSingleHlrTest(false);
+    }
+  }
+
   function updateCampaignFilters(nextFilters: CampaignFilters) {
     setBatch((currentBatch) => currentBatch ? { ...currentBatch, exportCompletedAt: null, campaignFilters: nextFilters } : currentBatch);
   }
@@ -590,6 +611,9 @@ export function ExcelWorkspace() {
                 </label>
                 <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que esta es solo una preparación local de una prueba, no una autorización ni una consulta.</label>
                 <SecondaryButton type="button" disabled={!singleHlrTestMobile || !isSingleHlrTestConfirmed} onClick={prepareSingleRealHlrTest} className="mt-3 w-full">Preparar una única prueba (sin red)</SecondaryButton>
+                <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !singleHlrTestMobile || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-2 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
+                <p className="mt-2 text-xs leading-5 text-slate-600">{firstRealSozarTestUiEnabled ? "La confirmación autoriza una única petición potencialmente facturable." : "La ejecución real está bloqueada por código y no puede activarse desde el navegador."}</p>
+                {singleHlrTestStatus ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-slate-700">Estado: {singleHlrTestStatus}</p> : null}
               </section>
             ) : null}
             <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><input type="checkbox" checked={isDemoMode} onChange={(event) => setIsDemoMode(event.target.checked)} className="mt-0.5 accent-amber-700" /><span><span className="font-semibold">Usar mock en modo demostración</span><span className="mt-0.5 block text-xs leading-5 text-amber-900">Genera datos simulados solo para registros pendientes; se guardarán con procedencia MOCK.</span></span></label>

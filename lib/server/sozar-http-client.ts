@@ -1,6 +1,7 @@
 import "server-only";
 
 import { mapDocumentedSozarResponse, validateSpanishMobileForSozar } from "./sozar-hlr-provider.ts";
+import { assertFirstRealSozarTestEnabled } from "./sozar-first-real-gate.ts";
 import type { HlrEnrichmentResult } from "../services/hlr-contract.ts";
 
 export type SozarAuthentication =
@@ -76,6 +77,16 @@ export class SozarContractPendingError extends Error {
  */
 export function createServerSozarFetchTransport(): SozarHttpTransport {
   if (!SOZAR_EXECUTION_CODE_GATE) throw new SozarExecutionBlockedError();
+  return async (url, init) => fetch(url, init);
+}
+
+/**
+ * The only exception to the shared HLR gate: a reviewed, one-shot route may
+ * use this transport after its own stricter source-code gate is opened. It
+ * does not enable queue workers, providers or bulk processing.
+ */
+export function createServerSozarFirstRealTestFetchTransport(): SozarHttpTransport {
+  assertFirstRealSozarTestEnabled();
   return async (url, init) => fetch(url, init);
 }
 

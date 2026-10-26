@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma } from "../../generated/prisma/client.ts";
 import { prisma } from "./prisma.ts";
 import { fingerprintHlrMobile, getRealHlrCacheExpiry } from "./sozar-control-plane.ts";
-import { getSozarHttpConfigurationFromEnvironment, createServerSozarFetchTransport, SozarHttpClient } from "./sozar-http-client.ts";
+import { getSozarHttpConfigurationFromEnvironment, createServerSozarFirstRealTestFetchTransport, SozarHttpClient } from "./sozar-http-client.ts";
 import { assertFirstRealSozarTestEnabled, getFirstRealSozarTestConfiguration, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "./sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "./sozar-first-real-plan.ts";
 import { describeSozarResponseShape, encryptSozarResponseForInspection } from "./sozar-response-inspection.ts";
@@ -36,7 +36,7 @@ export async function executeFirstRealSozarTest(input: { baseId: string; sourceR
   });
   if (!reserved) return { status: "BLOQUEADO", reason: "LIMITE_GLOBAL" } as const;
   try {
-    const raw = await new SozarHttpClient(getSozarHttpConfigurationFromEnvironment(), createServerSozarFetchTransport()).lookupRaw(plan.mobile);
+    const raw = await new SozarHttpClient(getSozarHttpConfigurationFromEnvironment(), createServerSozarFirstRealTestFetchTransport()).lookupRaw(plan.mobile);
     const encrypted = encryptSozarResponseForInspection(raw, configuration.encryptedResponseKey);
     const storedResponse: Prisma.InputJsonObject = { encrypted: encrypted as unknown as Prisma.InputJsonObject, shape: describeSozarResponseShape(raw) as unknown as Prisma.InputJsonValue, mapping: "documentation_required" };
     const result = await prisma.resultadoHlrReal.upsert({ where: { proveedor_huellaMovil: { proveedor: "sozar", huellaMovil: plan.mobileFingerprint } }, create: { proveedor: "sozar", huellaMovil: plan.mobileFingerprint, resultado: storedResponse, vigenteHasta: getRealHlrCacheExpiry(new Date()) }, update: { resultado: storedResponse, consultadoEn: new Date(), vigenteHasta: getRealHlrCacheExpiry(new Date()) } });
