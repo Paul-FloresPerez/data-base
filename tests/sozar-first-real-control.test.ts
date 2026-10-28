@@ -15,8 +15,8 @@ const input = {
   existingConsultationState: null,
 };
 
-test("la prueba única tiene una puerta exclusiva y las vías compartidas siguen cerradas", () => {
-  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, true);
+test("la prueba única y las vías compartidas siguen cerradas", () => {
+  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, false);
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
 });
