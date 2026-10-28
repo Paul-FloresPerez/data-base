@@ -63,7 +63,9 @@ export function cleanDataset(dataset: ImportedDataset): CleaningResult {
       continue;
     }
 
-    if (isNullLikeName(record.name)) {
+    // Some operational files intentionally contain only the identified mobile
+    // column. Apply the name rule only when a name column actually exists.
+    if (dataset.columnMapping.nombre !== undefined && isNullLikeName(record.name)) {
       excludedRecords.push({ ...record, reason: "nombre_vacio" });
       reasonBreakdown.nombre_vacio += 1;
       continue;

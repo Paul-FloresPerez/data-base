@@ -3,9 +3,11 @@ import { buildCampaignReport, campaignOperators } from "../campaigns/campaign-en
 import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
+import { portabilityDateForStorage } from "../excel/portability-date.ts";
 import type { BatchKind, DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
 import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
 import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
+import type { HistoricalResultImportSummary } from "../excel/historical-results.ts";
 
 /** Kept below Vercel's request limit; the client sends one chunk at a time. */
 export const RECORDS_PER_REQUEST = 100;
@@ -46,6 +48,7 @@ export interface StoredMetadata {
   exportCompletedAt?: string | null;
   realHlrQueue?: StoredRealHlrQueuePlan | null;
   realHlrConsultationsByMobile?: Record<string, HlrConsultationMetadata>;
+  historicalResultImport?: HistoricalResultImportSummary | null;
 }
 
 export interface SaveStartPayload {
@@ -154,6 +157,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         exportCompletedAt: batch.exportCompletedAt,
         realHlrQueue: batch.realHlrQueue,
         realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
+        historicalResultImport: batch.historicalResultImport,
       },
     },
     records,
@@ -213,6 +217,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     dataset,
     cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
     enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: operationalRecords.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
+    historicalResultImport: base.metadata.historicalResultImport ?? null,
     exportCompletedAt: base.metadata.exportCompletedAt ?? null,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     realHlrQueue: base.metadata.realHlrQueue ?? null,
@@ -226,7 +231,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
 export function enrichmentScalars(cells: string[] | null, columns: string[]) {
   if (!cells) return { operadorActual: null, operadorOriginal: null, fechaPortabilidad: null };
   const field = (name: keyof typeof enrichedFieldHeaders) => cells[columns.indexOf(enrichedFieldHeaders[name])] ?? null;
-  const rawDate = field("fecha_portabilidad");
-  const date = rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? new Date(`${rawDate}T00:00:00.000Z`) : null;
+  const rawDate = portabilityDateForStorage(field("fecha_portabilidad"));
+  const date = rawDate ? new Date(`${rawDate}T00:00:00.000Z`) : null;
   return { operadorActual: field("operador_actual"), operadorOriginal: field("operador_origen"), fechaPortabilidad: date };
 }

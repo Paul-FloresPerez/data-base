@@ -56,7 +56,7 @@ function toCampaignRows(campaign: CampaignBreakdown): EnrichmentOutputRow[] {
 function mobileColumnIndex(columns: readonly string[]): number | undefined {
   const index = columns.findIndex((column) => {
     const comparable = column.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-ES").replace(/[^a-z0-9]/g, "");
-    return ["telefonomovil", "telefonosmovil", "movil", "celular"].includes(comparable);
+    return ["telefonomovil", "telefonosmovil", "movil", "celular", "nums", "numeroemitido"].includes(comparable);
   });
   return index >= 0 ? index : undefined;
 }

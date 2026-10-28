@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { validateSpanishMobileForSozar } from "./sozar-hlr-provider.ts";
 
 const PROVIDER = "sozar";
+const BASE64URL_256_BIT_SECRET = /^[A-Za-z0-9_-]{43}$/;
 
 export type HlrApprovalLimit = {
   maxQueries: number;
@@ -41,6 +42,22 @@ export function fingerprintHlrMobile(mobile: string, hmacKey: string): string {
   const normalizedMobile = validateSpanishMobileForSozar(mobile);
   if (!hmacKey.trim()) throw new HlrApprovalLimitError("Falta la clave privada de huella HLR.");
   return createHmac("sha256", hmacKey).update(`${PROVIDER}:${normalizedMobile}`).digest("base64url");
+}
+
+/**
+ * The fingerprint key is deliberately a 256-bit, unpadded base64url secret.
+ * This makes its operational format as strict as the AES response key while
+ * keeping the value server-only.
+ */
+export function getSozarMobileFingerprintKeyFromEnvironment(): string {
+  const encodedKey = process.env.SOZAR_MOBILE_FINGERPRINT_KEY;
+  if (!encodedKey?.trim() || !BASE64URL_256_BIT_SECRET.test(encodedKey)) {
+    throw new HlrApprovalLimitError("La clave privada de huella Sozar debe ser un secreto base64url de 32 bytes.");
+  }
+  if (Buffer.from(encodedKey, "base64url").length !== 32) {
+    throw new HlrApprovalLimitError("La clave privada de huella Sozar debe descodificar a 32 bytes.");
+  }
+  return encodedKey;
 }
 
 /** Rejects any approval which could be understood as a free or unbounded run. */

@@ -1,4 +1,4 @@
-import type { CleaningResult, ImportedDataset } from "../excel/types.ts";
+import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel/types.ts";
 import type { RecordProvenance } from "../workspace/batch.ts";
 
 export interface RealHlrPreview {
@@ -12,7 +12,27 @@ export interface RealHlrPreview {
   pendingQueries: number;
 }
 
-function hasExistingOperators(record: CleaningResult["validRecords"][number], dataset: ImportedDataset) {
+interface ExistingOutputLookup {
+  rows: Map<number, string[]>;
+  actualIndex: number;
+  originalIndex: number;
+}
+
+function outputLookup(output?: EnrichmentOutput | null): ExistingOutputLookup {
+  return {
+    rows: new Map((output?.rows ?? []).map((row) => [row.sourceRow, row.cells])),
+    actualIndex: output?.columns.indexOf("Operador Actual") ?? -1,
+    originalIndex: output?.columns.indexOf("Operador Original") ?? -1,
+  };
+}
+
+function hasExistingOperators(record: CleaningResult["validRecords"][number], dataset: ImportedDataset, output: ExistingOutputLookup) {
+  const outputRow = output.rows.get(record.sourceRow);
+  const outputActual = output.actualIndex;
+  const outputOriginal = output.originalIndex;
+  if (outputRow && outputActual >= 0 && outputOriginal >= 0) {
+    return Boolean(outputRow[outputActual]?.trim() && outputRow[outputOriginal]?.trim());
+  }
   const actual = dataset.columnMapping.enriched.operador_actual;
   const original = dataset.columnMapping.enriched.operador_origen;
   return Boolean(record.cells[actual ?? -1]?.trim() && record.cells[original ?? -1]?.trim());
@@ -23,12 +43,14 @@ export function getRealHlrPreview(
   cleaning: CleaningResult,
   dataset: ImportedDataset,
   provenanceBySourceRow: Record<number, RecordProvenance>,
+  output?: EnrichmentOutput | null,
 ): RealHlrPreview {
+  const existingOutput = outputLookup(output);
   const byMobile = new Map<string, { real: boolean; existing: boolean }>();
   for (const record of cleaning.validRecords) {
     const current = byMobile.get(record.normalizedMobile) ?? { real: false, existing: false };
     current.real ||= provenanceBySourceRow[record.sourceRow] === "API_REAL";
-    current.existing ||= hasExistingOperators(record, dataset);
+    current.existing ||= hasExistingOperators(record, dataset, existingOutput);
     byMobile.set(record.normalizedMobile, current);
   }
   let enrichedByRealApi = 0;
@@ -55,8 +77,10 @@ export function getPendingRealHlrRecords(
   cleaning: CleaningResult,
   dataset: ImportedDataset,
   provenanceBySourceRow: Record<number, RecordProvenance>,
+  output?: EnrichmentOutput | null,
 ) {
+  const existingOutput = outputLookup(output);
   return cleaning.validRecords.filter((record) =>
-    provenanceBySourceRow[record.sourceRow] !== "API_REAL" && !hasExistingOperators(record, dataset),
+    provenanceBySourceRow[record.sourceRow] !== "API_REAL" && !hasExistingOperators(record, dataset, existingOutput),
   );
 }

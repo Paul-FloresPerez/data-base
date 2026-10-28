@@ -12,6 +12,8 @@ import {
   type CampaignInput,
 } from "../lib/campaigns/campaign-engine.ts";
 import { buildEnrichmentOutput } from "../lib/excel/enrichment-output.ts";
+import { datePartsFromPortability } from "../lib/excel/portability-date.ts";
+import { mergeHistoricalResults } from "../lib/excel/historical-results.ts";
 import { datasetFromWorkbook, ExcelImportError } from "../lib/excel/import-excel.ts";
 import {
   buildExportPlan,
@@ -181,6 +183,79 @@ test("solo exige Teléfono Movil y permite importar sin nombre o documento", () 
   assert.equal(dataset.columnMapping.nombre, undefined);
   assert.equal(dataset.columnMapping.documento, undefined);
   assert.equal(dataset.records[0]?.name, "");
+});
+
+test("acepta nums y Número Emitido como columna móvil sin exigir un nombre inexistente", () => {
+  for (const header of ["nums", "Número Emitido"]) {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[header], ["+34 612 345 678"]]), "Contactos");
+    const dataset = datasetFromWorkbook(workbook, XLSX, `${header}.xlsx`);
+    const cleaning = cleanDataset(dataset);
+
+    assert.equal(dataset.columnMapping.movil, 0);
+    assert.equal(dataset.columnMapping.nombre, undefined);
+    assert.equal(cleaning.validRecords.length, 1);
+    assert.equal(cleaning.reasonBreakdown.nombre_vacio, 0);
+  }
+});
+
+test("reconcilia resultados históricos por móvil, preserva columnas y no sustituye API_REAL", () => {
+  const inputWorkbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(inputWorkbook, XLSX.utils.aoa_to_sheet([
+    ["nums", "Nombres", "Numero Doc", "Dirección"],
+    ["612345678", "Persona A", "00000001A", "Dirección A"],
+    ["712345678", "Persona B", "00000002B", "Dirección B"],
+    ["612345679", "Persona C", "00000003C", "Dirección C"],
+  ]), "Base");
+  const dataset = datasetFromWorkbook(inputWorkbook, XLSX, "entrada.xlsx");
+  const cleaning = cleanDataset(dataset);
+
+  const historicalWorkbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(historicalWorkbook, XLSX.utils.aoa_to_sheet([
+    ["Número Emitido", "Operador Original", "Operador Actual", "Fecha Portabilidad", "Portabilidad Desde", "Portabilidad Hacia", "Tipo"],
+    ["712345678", "Origen B", "Actual B", "2026-02-03T00:00:00Z", "Donante B", "Receptor B", "Móvil"],
+    ["612345679", "Origen C", "Actual C", "", "", "", "Móvil"],
+    ["612345679", "Origen C duplicado", "Actual C duplicado", "", "", "", "Móvil"],
+    ["invalido", "", "", "", "", "", ""],
+    ["612345678", "Origen A histórico", "Actual A histórico", "2026-01-02T00:00:00Z", "Donante A", "Receptor A", "Móvil"],
+  ]), "Resultados");
+
+  const existing = buildEnrichmentOutput(dataset, cleaning.validRecords.map((record) => ({
+    ...record,
+    operador_actual: record.normalizedMobile === "612345678" ? "Actual API" : "",
+    operador_origen: record.normalizedMobile === "612345678" ? "Origen API" : "",
+    fecha_portabilidad: null,
+  })), "overwrite");
+  const result = mergeHistoricalResults({
+    dataset,
+    cleaning,
+    workbook: historicalWorkbook,
+    xlsx: XLSX,
+    sourceFileName: "historico.xlsx",
+    provenanceBySourceRow: { 2: "API_REAL" },
+    realHlrConsultationsByMobile: {},
+    existingOutput: existing,
+  });
+
+  assert.equal(result.summary.applied, 1);
+  assert.equal(result.summary.duplicateResults, 1);
+  assert.equal(result.summary.invalidResults, 1);
+  assert.equal(result.summary.skippedApiReal, 1);
+  assert.equal(result.summary.missingForBase, 1);
+  assert.deepEqual(dataset.records[0]?.cells, ["612345678", "Persona A", "00000001A", "Dirección A"]);
+  const operatorActual = result.output.columns.indexOf("Operador Actual");
+  const year = result.output.columns.indexOf("Año");
+  const portabilidadHacia = result.output.columns.indexOf("Portabilidad Hacia");
+  assert.equal(result.output.rows.find((row) => row.sourceRow === 2)?.cells[operatorActual], "Actual API");
+  assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[operatorActual], "Actual B");
+  assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[year], "2026");
+  assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[portabilidadHacia], "Receptor B");
+});
+
+test("deriva fecha ISO UTC sin desplazar día y deja vacías las fechas inválidas", () => {
+  assert.deepEqual(datePartsFromPortability("2026-02-03T23:45:00Z"), { anio: "2026", mes: "02", dia: "03" });
+  assert.deepEqual(datePartsFromPortability("03/02/2026"), { anio: "2026", mes: "02", dia: "03" });
+  assert.deepEqual(datePartsFromPortability("2026-02-30T00:00:00Z"), { anio: "", mes: "", dia: "" });
 });
 
 test("informa cuando falta la única columna obligatoria", () => {

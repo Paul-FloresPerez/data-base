@@ -1,6 +1,6 @@
 import "server-only";
 
-import { fingerprintHlrMobile, validateHlrApprovalLimit } from "./sozar-control-plane.ts";
+import { fingerprintHlrMobile } from "./sozar-control-plane.ts";
 import { validateSpanishMobileForSozar } from "./sozar-hlr-provider.ts";
 import { SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "./sozar-first-real-gate.ts";
 
@@ -15,7 +15,6 @@ export function planFirstRealSozarTest(input: {
   baseId: string;
   mobile: string;
   mobileFingerprintKey: string;
-  maxCostCents: number;
   globalOperationAlreadyRecorded: boolean;
   hasReusableRealResult: boolean;
   existingConsultationState: FirstRealTestExistingState;
@@ -24,7 +23,6 @@ export function planFirstRealSozarTest(input: {
   if (input.hasReusableRealResult) return { status: "BLOQUEADO", reason: "RESULTADO_REUTILIZABLE" };
   if (input.existingConsultationState) return { status: "BLOQUEADO", reason: "COLA_EXISTENTE" };
   const mobile = validateSpanishMobileForSozar(input.mobile);
-  validateHlrApprovalLimit({ maxQueries: 1, budgetMaxCents: input.maxCostCents, maxCostPerQueryCents: input.maxCostCents });
   const mobileFingerprint = fingerprintHlrMobile(mobile, input.mobileFingerprintKey);
   return {
     status: "LISTO",

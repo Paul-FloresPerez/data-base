@@ -8,7 +8,7 @@ import {
 } from "./types.ts";
 
 const inputFieldAliases = {
-  movil: ["telefonomovil", "movil", "celular"],
+  movil: ["telefonomovil", "movil", "celular", "nums", "numeroemitido"],
   documento: ["numerodoc", "documento", "dni", "nie"],
   nombre: ["nombres", "nombre"],
   telefono_contacto: ["telefonocontacto"],
@@ -79,7 +79,7 @@ function findColumnMapping(headers: string[]): ColumnMapping {
 
   if (mapping.movil === undefined) {
     throw new ExcelImportError(
-      "Falta la columna obligatoria “Teléfono Movil”. También se aceptan “Móvil” o “Celular”.",
+      "Falta la columna obligatoria “Teléfono Movil”. También se aceptan “Móvil”, “Celular”, “nums” o “Número Emitido”.",
     );
   }
 

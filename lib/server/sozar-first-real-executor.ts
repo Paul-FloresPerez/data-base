@@ -20,7 +20,7 @@ export async function executeFirstRealSozarTest(input: { baseId: string; sourceR
     prisma.resultadoHlrReal.findFirst({ where: { proveedor: "sozar", huellaMovil: fingerprint, vigenteHasta: { gt: new Date() } }, select: { id: true } }),
     prisma.consultaHlr.findFirst({ where: { proveedor: "sozar", huellaMovil: fingerprint }, select: { estado: true } }),
   ]);
-  const plan = planFirstRealSozarTest({ baseId: input.baseId, mobile: record.movilNormalizado, mobileFingerprintKey: configuration.mobileFingerprintKey, maxCostCents: configuration.maxCostCents, globalOperationAlreadyRecorded: Boolean(globalEvent), hasReusableRealResult: Boolean(reusable), existingConsultationState: existing?.estado ?? null });
+  const plan = planFirstRealSozarTest({ baseId: input.baseId, mobile: record.movilNormalizado, mobileFingerprintKey: configuration.mobileFingerprintKey, globalOperationAlreadyRecorded: Boolean(globalEvent), hasReusableRealResult: Boolean(reusable), existingConsultationState: existing?.estado ?? null });
   if (plan.status !== "LISTO") return { status: plan.status, reason: plan.reason } as const;
 
   // The unique event is the durable global latch. A concurrent contender that
@@ -28,10 +28,13 @@ export async function executeFirstRealSozarTest(input: { baseId: string; sourceR
   const reserved = await prisma.$transaction(async (tx) => {
     const prior = await tx.eventoConsultaHlr.findUnique({ where: { claveOperacion: SOZAR_FIRST_REAL_TEST_OPERATION_KEY }, select: { id: true } });
     if (prior) return null;
-    const approval = await tx.aprobacionHlr.create({ data: { baseId: input.baseId, usuarioId: input.userId, claveOperacion: `${SOZAR_FIRST_REAL_TEST_OPERATION_KEY}:approval`, estado: "APROBADA", maximoConsultas: 1, presupuestoMaxCentimos: configuration.maxCostCents, costeMaximoPorConsultaCentimos: configuration.maxCostCents, consultasReservadas: 1, gastoReservadoCentimos: configuration.maxCostCents, aprobadoEn: new Date() } });
+    // The tariff is not documented. The schema correctly forbids an approved
+    // zero-cost run, so preserve the explicit user confirmation in the audit
+    // event while recording the money fields as unknown (zero) and PREPARADA.
+    const approval = await tx.aprobacionHlr.create({ data: { baseId: input.baseId, usuarioId: input.userId, claveOperacion: `${SOZAR_FIRST_REAL_TEST_OPERATION_KEY}:approval`, estado: "PREPARADA", maximoConsultas: 1, presupuestoMaxCentimos: 0, costeMaximoPorConsultaCentimos: 0, consultasReservadas: 1, gastoReservadoCentimos: 0 } });
     const consultation = await tx.consultaHlr.create({ data: { proveedor: "sozar", huellaMovil: plan.mobileFingerprint, claveIdempotencia: plan.idempotencyKey, estado: "EN_CURSO", tokenReserva: randomUUID(), reservadaEn: new Date(), reservaExpiraEn: new Date(Date.now() + 15 * 60_000), intentos: 1 } });
     await tx.consultaHlrRegistro.create({ data: { consultaId: consultation.id, registroId: record.id, baseId: input.baseId, aprobacionId: approval.id } });
-    await tx.eventoConsultaHlr.create({ data: { consultaId: consultation.id, tipo: "COLA_PREPARADA", claveOperacion: SOZAR_FIRST_REAL_TEST_OPERATION_KEY, metadatos: { mode: "single-controlled" } } });
+    await tx.eventoConsultaHlr.create({ data: { consultaId: consultation.id, tipo: "COLA_PREPARADA", claveOperacion: SOZAR_FIRST_REAL_TEST_OPERATION_KEY, metadatos: { mode: "single-controlled", explicitChargeConfirmation: true, tariff: "unknown", automaticRetries: false } } });
     return consultation;
   });
   if (!reserved) return { status: "BLOQUEADO", reason: "LIMITE_GLOBAL" } as const;

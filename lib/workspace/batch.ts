@@ -2,6 +2,7 @@ import { campaignOperators, type CampaignFilters, type CampaignOperatorId } from
 import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel/types.ts";
 import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
 import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
+import type { HistoricalResultImportSummary } from "../excel/historical-results.ts";
 
 export type BatchStatus = "lista_para_limpiar" | "lista_para_enriquecer" | "lista_para_distribuir";
 export type BatchKind = "ORIGINAL" | "RECICLADA";
@@ -24,6 +25,8 @@ export interface WorkingBatch {
   displayName?: string;
   distribution: DistributionSettings;
   enrichmentOutput: EnrichmentOutput | null;
+  /** Read-only historical Excel reconciliation; never represents API traffic. */
+  historicalResultImport: HistoricalResultImportSummary | null;
   /** Set only after an export file is successfully generated and download is initiated locally. */
   exportCompletedAt: string | null;
   fileName: string;
@@ -83,6 +86,7 @@ export function createWorkingBatch(
     dataset,
     cleaning: null,
     enrichmentOutput: null,
+    historicalResultImport: null,
     exportCompletedAt: null,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
     realHlrConsultationsByMobile: {},

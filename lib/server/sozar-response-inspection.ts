@@ -6,6 +6,7 @@ const RESPONSE_FORMAT = "sozar-encrypted-response-v1" as const;
 const MAX_RESPONSE_BYTES = 128 * 1024;
 const MAX_INSPECTION_DEPTH = 6;
 const MAX_INSPECTION_KEYS = 50;
+const BASE64URL_256_BIT_SECRET = /^[A-Za-z0-9_-]{43}$/;
 
 export interface EncryptedSozarResponse {
   format: typeof RESPONSE_FORMAT;
@@ -27,6 +28,9 @@ export type SozarResponseShape =
 export class SozarResponseInspectionError extends Error {}
 
 function decodeEncryptionKey(encodedKey: string): Buffer {
+  if (!BASE64URL_256_BIT_SECRET.test(encodedKey)) {
+    throw new SozarResponseInspectionError("La clave privada de inspección Sozar debe ser base64url sin relleno y de 32 bytes.");
+  }
   const key = Buffer.from(encodedKey, "base64url");
   if (key.length !== 32) {
     throw new SozarResponseInspectionError("La clave privada de inspección Sozar debe tener 32 bytes codificados en base64url.");

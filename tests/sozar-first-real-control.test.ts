@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SOZAR_EXECUTION_CODE_GATE } from "../lib/server/sozar-http-client.ts";
 import { isSozarHlrExecutionEnabled } from "../lib/server/sozar-hlr-provider.ts";
-import { SOZAR_FIRST_REAL_TEST_CODE_GATE, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "../lib/server/sozar-first-real-gate.ts";
+import { getFirstRealSozarTestConfiguration, SOZAR_FIRST_REAL_TEST_CODE_GATE, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "../lib/server/sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "../lib/server/sozar-first-real-plan.ts";
 import { readFile } from "node:fs/promises";
 
@@ -10,14 +10,13 @@ const input = {
   baseId: "00000000-0000-4000-8000-000000000001",
   mobile: "+34 612 345 678",
   mobileFingerprintKey: "test-hmac-key",
-  maxCostCents: 25,
   globalOperationAlreadyRecorded: false,
   hasReusableRealResult: false,
   existingConsultationState: null,
 };
 
-test("la prueba real exige tres puertas de código cerradas", () => {
-  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, false);
+test("la prueba única tiene una puerta exclusiva y las vías compartidas siguen cerradas", () => {
+  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, true);
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
 });
@@ -29,6 +28,27 @@ test("el plan controla exactamente un móvil y una clave global persistente", ()
     assert.equal(plan.mobile, "612345678");
     assert.equal(plan.operationKey, SOZAR_FIRST_REAL_TEST_OPERATION_KEY);
     assert.doesNotMatch(plan.idempotencyKey, /612345678/);
+  }
+});
+
+test("la prueba única no exige ni inventa una tarifa para reservar un único móvil", () => {
+  assert.equal(planFirstRealSozarTest(input).status, "LISTO");
+});
+
+test("las claves de la prueba única requieren 32 bytes en base64url antes de reservar", () => {
+  const fingerprintBefore = process.env.SOZAR_MOBILE_FINGERPRINT_KEY;
+  const responseBefore = process.env.SOZAR_RESPONSE_ENCRYPTION_KEY;
+  try {
+    process.env.SOZAR_MOBILE_FINGERPRINT_KEY = Buffer.alloc(32, 1).toString("base64url");
+    process.env.SOZAR_RESPONSE_ENCRYPTION_KEY = Buffer.alloc(32, 2).toString("base64url");
+    assert.equal(getFirstRealSozarTestConfiguration().mobileFingerprintKey.length, 43);
+    process.env.SOZAR_RESPONSE_ENCRYPTION_KEY = "invalida";
+    assert.throws(() => getFirstRealSozarTestConfiguration());
+  } finally {
+    if (fingerprintBefore === undefined) delete process.env.SOZAR_MOBILE_FINGERPRINT_KEY;
+    else process.env.SOZAR_MOBILE_FINGERPRINT_KEY = fingerprintBefore;
+    if (responseBefore === undefined) delete process.env.SOZAR_RESPONSE_ENCRYPTION_KEY;
+    else process.env.SOZAR_RESPONSE_ENCRYPTION_KEY = responseBefore;
   }
 });
 

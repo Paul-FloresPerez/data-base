@@ -1,3 +1,5 @@
+import { parsePortabilityDateParts } from "../excel/portability-date.ts";
+
 export const campaignOperators = ["yoigo", "vodafone"] as const;
 
 export type CampaignOperatorId = (typeof campaignOperators)[number];
@@ -8,7 +10,6 @@ export interface CampaignOperatorDefinition {
   id: CampaignOperatorId;
   label: string;
 }
-
 interface KnownOperatorDefinition {
   id: KnownOperatorId;
   aliases: readonly string[];
@@ -166,29 +167,8 @@ export function findCampaignColumns(columns: readonly string[]): CampaignColumnM
 }
 
 export function parsePortabilityDate(value: string): Date | null {
-  const dateValue = value.trim();
-  const isoMatch = dateValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  const localMatch = dateValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  const values = isoMatch
-    ? [Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3])]
-    : localMatch
-      ? [Number(localMatch[3]), Number(localMatch[2]), Number(localMatch[1])]
-      : null;
-
-  if (!values) {
-    return null;
-  }
-
-  const candidate = new Date(values[0], values[1] - 1, values[2]);
-  if (
-    candidate.getFullYear() !== values[0] ||
-    candidate.getMonth() !== values[1] - 1 ||
-    candidate.getDate() !== values[2]
-  ) {
-    return null;
-  }
-
-  return candidate;
+  const parts = parsePortabilityDateParts(value);
+  return parts ? new Date(Number(parts.anio), Number(parts.mes) - 1, Number(parts.dia)) : null;
 }
 
 export function completedMonthsSincePortability(value: string, asOfDate = new Date()): number | null {

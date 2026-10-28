@@ -16,6 +16,7 @@ import { buildCampaignReport, campaignOperators, type CampaignFilters, type Camp
 import { cleanDataset } from "@/lib/excel/cleaning";
 import { buildEnrichmentOutput } from "@/lib/excel/enrichment-output";
 import { importExcelFile } from "@/lib/excel/import-excel";
+import { importHistoricalResultsFile, type HistoricalResultImportSummary } from "@/lib/excel/historical-results";
 import {
   enrichedFieldHeaders,
   enrichedFieldOrder,
@@ -50,8 +51,8 @@ function maskMobile(mobile: string): string {
   return `•••••${mobile.slice(-4)}`;
 }
 
-/** A second client-side guard; server gates remain authoritative. */
-const firstRealSozarTestUiEnabled = false;
+/** UI visibility only; server authorization, reservation and transport gates remain authoritative. */
+const firstRealSozarTestUiEnabled = true;
 
 function ModuleHeading({
   eyebrow,
@@ -120,6 +121,7 @@ function SecondaryButton({ children, className = "", ...props }: ButtonHTMLAttri
 
 export function ExcelWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const historicalFileInputRef = useRef<HTMLInputElement>(null);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>("dashboard");
   const [batch, setBatch] = useState<WorkingBatch | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
@@ -130,6 +132,8 @@ export function ExcelWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isImportingHistorical, setIsImportingHistorical] = useState(false);
+  const [historicalResultStatus, setHistoricalResultStatus] = useState<HistoricalResultImportSummary | null>(null);
   const [realHlrLimit, setRealHlrLimit] = useState("100");
   const [realHlrBudget, setRealHlrBudget] = useState("0");
   const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
@@ -137,6 +141,7 @@ export function ExcelWorkspace() {
   const [isSingleHlrTestConfirmed, setIsSingleHlrTestConfirmed] = useState(false);
   const [isExecutingSingleHlrTest, setIsExecutingSingleHlrTest] = useState(false);
   const [singleHlrTestStatus, setSingleHlrTestStatus] = useState<string | null>(null);
+  const [isSingleHlrTestServerReady, setIsSingleHlrTestServerReady] = useState(false);
   const [isCleaning, startCleaning] = useTransition();
   const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
   const [saveRetry, setSaveRetry] = useState(0);
@@ -146,6 +151,7 @@ export function ExcelWorkspace() {
   const dataset: ImportedDataset | null = batch?.dataset ?? null;
   const cleaning: CleaningResult | null = batch?.cleaning ?? null;
   const enrichmentOutput: EnrichmentOutput | null = batch?.enrichmentOutput ?? null;
+  const historicalImportSummary = historicalResultStatus ?? batch?.historicalResultImport ?? null;
   const campaignFilters: CampaignFilters = batch?.campaignFilters ?? defaultCampaignFilters;
   const batchSignature = useMemo(() => batch ? JSON.stringify(batch) : null, [batch]);
 
@@ -198,13 +204,26 @@ export function ExcelWorkspace() {
     ? (Object.entries(cleaning.reasonBreakdown).filter(([, count]) => count > 0) as [ExclusionReason, number][])
     : [];
   const realHlrPreview = useMemo(
-    () => cleaning && dataset ? getRealHlrPreview(cleaning, dataset, batch?.provenanceBySourceRow ?? {}) : null,
-    [batch?.provenanceBySourceRow, cleaning, dataset],
+    () => cleaning && dataset ? getRealHlrPreview(cleaning, dataset, batch?.provenanceBySourceRow ?? {}, enrichmentOutput) : null,
+    [batch?.provenanceBySourceRow, cleaning, dataset, enrichmentOutput],
   );
   const pendingRealHlrRecords = useMemo(
-    () => cleaning && dataset ? getPendingRealHlrRecords(cleaning, dataset, batch?.provenanceBySourceRow ?? {}) : [],
-    [batch?.provenanceBySourceRow, cleaning, dataset],
+    () => cleaning && dataset ? getPendingRealHlrRecords(cleaning, dataset, batch?.provenanceBySourceRow ?? {}, enrichmentOutput) : [],
+    [batch?.provenanceBySourceRow, cleaning, dataset, enrichmentOutput],
   );
+
+  useEffect(() => {
+    if (!firstRealSozarTestUiEnabled || activeModule !== "enriquecimiento" || !realHlrPreview) {
+      return;
+    }
+    const controller = new AbortController();
+    void fetch("/api/sozar/first-real", { signal: controller.signal })
+      .then(async (response) => response.ok ? response.json() as Promise<{ configurationReady?: boolean }> : null)
+      .then((payload) => setIsSingleHlrTestServerReady(payload?.configurationReady === true))
+      .catch(() => setIsSingleHlrTestServerReady(false));
+    return () => controller.abort();
+  }, [activeModule, realHlrPreview]);
+  const isSingleHlrTestReady = activeModule === "enriquecimiento" && Boolean(realHlrPreview) && isSingleHlrTestServerReady;
 
   const workflow = useMemo<WorkflowStep[]>(() => {
     const cleaningReady = Boolean(cleaning);
@@ -263,6 +282,7 @@ export function ExcelWorkspace() {
       setIsDemoMode(false);
       setIsOverwriteConfirmationOpen(false);
       setIsReplaceConfirmationOpen(false);
+      setHistoricalResultStatus(null);
       setPendingFile(null);
       setActiveModule("importacion");
     } catch (caughtError) {
@@ -306,6 +326,7 @@ export function ExcelWorkspace() {
     setIsOverwriteConfirmationOpen(false);
     setIsNewBatchConfirmationOpen(false);
     setIsReplaceConfirmationOpen(false);
+    setHistoricalResultStatus(null);
     setActiveModule("importacion");
   }
 
@@ -323,11 +344,6 @@ export function ExcelWorkspace() {
       return;
     }
 
-    if (dataset.columnMapping.nombre === undefined) {
-      setError("No se puede continuar con la limpieza: falta la columna “Nombres” o “Nombre” en el Excel.");
-      return;
-    }
-
     setError(null);
     startCleaning(() => {
       const nextCleaning = cleanDataset(dataset);
@@ -340,6 +356,7 @@ export function ExcelWorkspace() {
             distribution: defaultDistributionSettings(),
             exportCompletedAt: null,
             realHlrQueue: null,
+            historicalResultImport: null,
           }
         : currentBatch);
       setIsOverwriteConfirmationOpen(false);
@@ -352,6 +369,10 @@ export function ExcelWorkspace() {
     }
     if (!isDemoMode) {
       setError("No hay API HLR real configurada. Activa el modo demostración para usar datos mock identificados como tales.");
+      return;
+    }
+    if (batch?.historicalResultImport) {
+      setError("La base ya contiene resultados históricos. No se sustituyen por datos mock; limpia la base si necesitas iniciar otro proceso.");
       return;
     }
 
@@ -398,6 +419,44 @@ export function ExcelWorkspace() {
     setIsOverwriteConfirmationOpen(true);
   }
 
+  async function importHistoricalResults(file: File) {
+    if (!batch || !dataset || !cleaning) return;
+    setError(null);
+    setIsImportingHistorical(true);
+    try {
+      const merged = await importHistoricalResultsFile({
+        file,
+        dataset,
+        cleaning,
+        provenanceBySourceRow: batch.provenanceBySourceRow,
+        realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
+        existingOutput: batch.enrichmentOutput,
+      });
+      setHistoricalResultStatus(merged.summary);
+      setBatch((current) => current?.id === batch.id ? {
+        ...current,
+        enrichmentOutput: merged.output,
+        historicalResultImport: merged.summary,
+        provenanceBySourceRow: {
+          ...current.provenanceBySourceRow,
+          ...Object.fromEntries(merged.appliedSourceRows.map((sourceRow) => [sourceRow, "EXCEL"] as const)),
+        },
+        exportCompletedAt: null,
+        realHlrQueue: null,
+      } : current);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudo importar el resultado histórico.");
+    } finally {
+      setIsImportingHistorical(false);
+    }
+  }
+
+  function handleHistoricalResultFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void importHistoricalResults(file);
+  }
+
   function prepareRealHlrQueue() {
     if (!batch || !cleaning || !dataset || !isRealHlrQueueConfirmed) return;
     const maxQueries = Number(realHlrLimit);
@@ -431,7 +490,7 @@ export function ExcelWorkspace() {
   }
 
   async function executeSingleRealHlrTest() {
-    if (!firstRealSozarTestUiEnabled || !batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile) return;
+    if (!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile) return;
     const record = pendingRealHlrRecords.find((candidate) => candidate.normalizedMobile === singleHlrTestMobile);
     if (!record) return setError("El móvil seleccionado ya no está pendiente.");
     setIsExecutingSingleHlrTest(true);
@@ -520,7 +579,7 @@ export function ExcelWorkspace() {
               <div><p className="text-sm font-semibold text-slate-900">Vista previa de registros</p><p className="mt-1 text-sm text-slate-600">El detalle queda disponible solo dentro de los módulos operativos.</p></div>
               <SecondaryButton type="button" onClick={() => navigate("limpieza")}>Ir a limpieza</SecondaryButton>
             </div>
-            {dataset.columnMapping.nombre === undefined ? <p role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Falta la columna “Nombres” o “Nombre”. La importación se conserva, pero no se podrá ejecutar la limpieza.</p> : null}
+            {dataset.columnMapping.nombre === undefined ? <p role="status" className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">No hay columna de nombre: se validarán móvil, formato y duplicados. La regla de nombre vacío solo se aplica cuando esa columna existe.</p> : null}
             <div className="mt-5">
               <DataTable caption="Vista previa de registros importados" columns={["Fila", ...dataset.columns]} rows={dataset.records.map((record) => ({ id: `preview-${record.sourceRow}`, cells: [String(record.sourceRow), ...record.cells] }))} emptyMessage="El archivo no contiene registros debajo de los encabezados." />
             </div>
@@ -542,7 +601,7 @@ export function ExcelWorkspace() {
           headingId="limpieza-title"
           title="Limpieza de registros"
           description="Solo los móviles españoles válidos avanzan al enriquecimiento. Los excluidos se conservan localmente con su motivo y fila de origen."
-          action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton> : <SecondaryButton type="button" disabled={dataset.columnMapping.nombre === undefined || isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
+          action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton> : <SecondaryButton type="button" disabled={isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
         />
 
         {dataset.columnMapping.nombre === undefined ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No se puede continuar: falta la columna “Nombres” o “Nombre” en el Excel.</div> : null}
@@ -569,7 +628,7 @@ export function ExcelWorkspace() {
               </section>
             </div>
           </>
-        ) : <EmptyModuleState title="Base lista para validar" description="Ejecuta la limpieza para detectar teléfonos no válidos, nombres vacíos o NULL y números duplicados." action={<PrimaryButton type="button" disabled={dataset.columnMapping.nombre === undefined || isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</PrimaryButton>} />}
+        ) : <EmptyModuleState title="Base lista para validar" description="Ejecuta la limpieza para detectar teléfonos no válidos, duplicados y, cuando exista, nombres vacíos o NULL." action={<PrimaryButton type="button" disabled={isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</PrimaryButton>} />}
       </section>
     );
   }
@@ -592,13 +651,28 @@ export function ExcelWorkspace() {
                 <p className="mt-1 text-xs leading-5 text-slate-500">Detectados: {existingEnrichmentFields.map((field) => enrichedFieldHeaders[field]).join(", ")}.</p>
               </div>
             ) : <p className="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">No se detectaron operadores. La salida mantendrá las columnas originales y añadirá solo los campos faltantes.</p>}
+            <section className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4" aria-labelledby="historical-results-title">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p id="historical-results-title" className="text-sm font-semibold text-slate-900">Importar resultados históricos</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Une un Excel histórico por móvil normalizado. No envía datos a Sozar y sus resultados se guardan con procedencia EXCEL.</p>
+                </div>
+                <span className="border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold tracking-wide text-slate-700">SIN RED</span>
+              </div>
+              <input ref={historicalFileInputRef} className="sr-only" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleHistoricalResultFileChange} />
+              <SecondaryButton type="button" disabled={isImportingHistorical || cleaning.validRecords.length === 0} onClick={() => historicalFileInputRef.current?.click()} className="mt-3 w-full">{isImportingHistorical ? "Uniendo resultados…" : "Seleccionar Excel histórico"}</SecondaryButton>
+              {historicalImportSummary ? (() => {
+                const summary = historicalImportSummary;
+                return <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div><dt className="text-slate-500">Vinculados</dt><dd className="font-semibold text-slate-900">{summary.applied}</dd></div><div><dt className="text-slate-500">Sin resultado</dt><dd className="font-semibold text-amber-900">{summary.missingForBase}</dd></div><div><dt className="text-slate-500">Duplicados</dt><dd className="font-semibold text-amber-900">{summary.duplicateResults}</dd></div><div><dt className="text-slate-500">Inválidos</dt><dd className="font-semibold text-amber-900">{summary.invalidResults}</dd></div><div><dt className="text-slate-500">Sin base</dt><dd className="font-semibold text-amber-900">{summary.resultsWithoutBase}</dd></div><div><dt className="text-slate-500">API real protegida</dt><dd className="font-semibold text-slate-900">{summary.skippedApiReal}</dd></div></dl>;
+              })() : null}
+            </section>
             {realHlrPreview ? <section className="mt-5 border border-slate-200 bg-slate-50 p-4" aria-labelledby="real-hlr-title"><div className="flex items-start justify-between gap-3"><div><p id="real-hlr-title" className="text-sm font-semibold text-slate-900">Preparación HLR real</p><p className="mt-1 text-xs leading-5 text-slate-600">Solo usa la columna móvil detectada. El proveedor está deshabilitado y esta fase no transmite números.</p></div><span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span></div><dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><div><dt className="text-slate-500">Móviles válidos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.validRecords}</dd></div><div><dt className="text-slate-500">Móviles únicos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.uniqueMobiles}</dd></div><div><dt className="text-slate-500">Fijos excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.fixedExcluded}</dd></div><div><dt className="text-slate-500">Inválidos o vacíos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.invalidExcluded}</dd></div><div><dt className="text-slate-500">Duplicados excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.duplicateExcluded}</dd></div><div><dt className="text-slate-500">Pendientes</dt><dd className="mt-0.5 font-semibold text-amber-900">{realHlrPreview.pendingQueries}</dd></div><div><dt className="text-slate-500">Resultados reales asociados</dt><dd className="mt-0.5 font-semibold text-emerald-800">{realHlrPreview.enrichedByRealApi}</dd></div></dl>{realHlrPreview.enrichedFromExistingData > 0 ? <p className="mt-3 text-xs leading-5 text-slate-600">{realHlrPreview.enrichedFromExistingData} móviles contienen operadores de Excel o mock, sin evidencia de una consulta real; no se programan automáticamente.</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Límite futuro de consultas<input type="number" min="1" max="10000" value={realHlrLimit} onChange={(event) => setRealHlrLimit(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-700">Tope de gasto declarado<input type="number" min="0" step="0.01" value={realHlrBudget} onChange={(event) => setRealHlrBudget(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label></div><p className="mt-3 text-xs leading-5 text-slate-600">Coste estimado: pendiente de la tarifa oficial por consulta. No se muestra ni se asume un importe.</p><label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isRealHlrQueueConfirmed} onChange={(event) => setIsRealHlrQueueConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que solo quiero preparar una cola bloqueada; no autoriza consultas ni gasto.</label><SecondaryButton type="button" disabled={!isRealHlrQueueConfirmed || realHlrPreview.pendingQueries === 0} onClick={prepareRealHlrQueue} className="mt-3 w-full">Preparar cola bloqueada (sin consultas)</SecondaryButton>{batch?.realHlrQueue ? <p className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">Cola preparada: {batch.realHlrQueue.jobs.length} solicitudes máximas, estado bloqueado. Se conserva al guardar la base y no puede ejecutarse desde esta versión.</p> : null}<p className="mt-3 text-xs leading-5 text-slate-500">Faltan por documentar la autenticación, tarifas, límites, campos de respuesta y semántica de operadores/portabilidad del proveedor.</p></section> : null}
             {realHlrPreview ? (
               <section className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4" aria-labelledby="single-hlr-test-title">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p id="single-hlr-test-title" className="text-sm font-semibold text-slate-900">Prueba administrativa controlada</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-600">Prepara exactamente un móvil pendiente para revisión posterior. No consulta Sozar, no autoriza gasto y no transmite datos.</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">Selecciona exactamente un móvil pendiente. La consulta solo se enviará tras tu confirmación explícita y puede generar un cargo real.</p>
                   </div>
                   <span className="border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold tracking-wide text-blue-900">1 MÁXIMO</span>
                 </div>
@@ -609,10 +683,10 @@ export function ExcelWorkspace() {
                     {pendingRealHlrRecords.map((record) => <option key={record.normalizedMobile} value={record.normalizedMobile}>{maskMobile(record.normalizedMobile)}</option>)}
                   </select>
                 </label>
-                <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que esta es solo una preparación local de una prueba, no una autorización ni una consulta.</label>
+                <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que autorizo una única consulta potencialmente facturable; no habrá reintentos automáticos.</label>
                 <SecondaryButton type="button" disabled={!singleHlrTestMobile || !isSingleHlrTestConfirmed} onClick={prepareSingleRealHlrTest} className="mt-3 w-full">Preparar una única prueba (sin red)</SecondaryButton>
-                <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !singleHlrTestMobile || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-2 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
-                <p className="mt-2 text-xs leading-5 text-slate-600">{firstRealSozarTestUiEnabled ? "La confirmación autoriza una única petición potencialmente facturable." : "La ejecución real está bloqueada por código y no puede activarse desde el navegador."}</p>
+                <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !singleHlrTestMobile || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-2 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
+                <p className="mt-2 text-xs leading-5 text-slate-600">{firstRealSozarTestUiEnabled && isSingleHlrTestReady ? "La confirmación autoriza una única petición potencialmente facturable." : "La configuración privada del servidor aún no está lista; no se puede ejecutar la consulta."}</p>
                 {singleHlrTestStatus ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-slate-700">Estado: {singleHlrTestStatus}</p> : null}
               </section>
             ) : null}

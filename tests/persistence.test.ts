@@ -31,6 +31,36 @@ test("restaura el nombre elegido y el estado de exportación guardado", () => {
   assert.equal(restored.exportCompletedAt, "2026-10-23T00:00:00.000Z");
 });
 
+test("guarda y recupera resultados históricos con procedencia EXCEL sin perder columnas", () => {
+  const batch = createWorkingBatch(dataset, "11111111-1111-4111-8111-111111111113", "2026-10-22T00:00:00.000Z");
+  batch.cleaning = cleanDataset(dataset);
+  batch.enrichmentOutput = {
+    columns: ["Móvil", "CP", "Nombre", "Operador Actual", "Operador Original", "Fecha Portabilidad", "Portabilidad Hacia"],
+    rows: [{ sourceRow: 2, cells: ["612345678", "01234", "Ana", "Operador sintético", "Origen sintético", "2026-02-03T00:00:00Z", "Destino sintético"] }],
+  };
+  batch.historicalResultImport = {
+    sourceFileName: "historico.xlsx",
+    sourceColumns: ["Número Emitido", "Operador Actual"],
+    matched: 1,
+    applied: 1,
+    missingForBase: 0,
+    resultsWithoutBase: 0,
+    invalidResults: 0,
+    duplicateResults: 0,
+    skippedApiReal: 0,
+  };
+  batch.provenanceBySourceRow[2] = "EXCEL";
+
+  const { start, records } = serializeBatch(batch, "Histórica");
+  const restored = restoreBatch({ id: start.id, name: start.name, createdAt: batch.createdAt, metadata: { ...start.metadata, completed: true, revision: null }, records: records.map((record, index) => ({ ...record, id: String(index) })) });
+
+  assert.equal(restored.provenanceBySourceRow[2], "EXCEL");
+  assert.equal(restored.historicalResultImport?.applied, 1);
+  assert.equal(restored.enrichmentOutput?.columns.includes("Portabilidad Hacia"), true);
+  assert.equal(restored.enrichmentOutput?.rows[0]?.cells[1], "01234");
+  assert.equal(restored.enrichmentOutput?.rows[0]?.cells[6], "Destino sintético");
+});
+
 test("el guardado separa peticiones y conserva un UUID estable en reintentos", () => {
   const batch = createWorkingBatch({ ...dataset, records: Array.from({ length: 201 }, (_, index) => ({ ...dataset.records[0]!, sourceRow: index + 2 })) }, "22222222-2222-4222-8222-222222222222");
   const first = serializeBatch(batch, "Base");
