@@ -143,6 +143,46 @@ test("la cola bloqueada es idempotente y se identifica por móvil normalizado", 
   assert.throws(() => prepareDisabledRealHlrQueue({ baseId: "11111111-1111-4111-8111-111111111111", records: [{ ...records[0]!, normalizedMobile: "912345678" }], maxQueries: 1, budgetLimit: 0 }), /solo admite móviles españoles/i);
 });
 
+test("seleccionar los diez mil móviles pendientes solo prepara una cola local bloqueada", () => {
+  const syntheticRecords = Array.from({ length: 10_000 }, (_, index) => {
+    const mobile = `6${String(index).padStart(8, "0")}`;
+    return {
+      sourceRow: index + 2,
+      cells: [mobile],
+      mobile,
+      document: "",
+      name: "",
+      contactPhone: "",
+      normalizedMobile: mobile,
+    };
+  });
+  const plan = prepareDisabledRealHlrQueue({
+    baseId: "11111111-1111-4111-8111-111111111111",
+    records: syntheticRecords,
+    maxQueries: syntheticRecords.length,
+    budgetLimit: 0,
+  });
+
+  assert.equal(plan.status, "PREPARADA_BLOQUEADA");
+  assert.equal(plan.jobs.length, 10_000);
+  assert.equal(plan.jobs.every((job) => job.status === "PENDIENTE_APROBACION"), true);
+  assert.equal(plan.jobs.some((job) => "sourceRow" in job), false);
+});
+
+test("la selección Todos no reutiliza la ruta ni el permiso excepcional de la prueba individual", async () => {
+  const workspace = await readFile(new URL("../components/excel-workspace.tsx", import.meta.url), "utf8");
+  const selectionStart = workspace.indexOf("function prepareAllRealHlrSelection()");
+  const selectionEnd = workspace.indexOf("async function executeSingleRealHlrTest()", selectionStart);
+  const selectionSource = workspace.slice(selectionStart, selectionEnd);
+  const executionSource = workspace.slice(selectionEnd, workspace.indexOf("function updateCampaignFilters", selectionEnd));
+
+  assert.ok(selectionStart >= 0 && selectionEnd > selectionStart);
+  assert.match(selectionSource, /prepareDisabledRealHlrQueue/);
+  assert.doesNotMatch(selectionSource, /\bfetch\s*\(/);
+  assert.match(executionSource, /firstRealSozarTestUiEnabled/);
+  assert.match(executionSource, /hasPreparedSingleHlrSelection/);
+});
+
 test("los resultados futuros se vinculan por móvil normalizado y no por fila", async () => {
   const result = await new TestHlrProvider().lookup("712345678");
   const indexed = indexHlrResultsByNormalizedMobile([result]);

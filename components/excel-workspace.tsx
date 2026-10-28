@@ -30,7 +30,7 @@ import {
 } from "@/lib/excel/types";
 import { simulateHlrMnp } from "@/lib/services/mock-hlr";
 import { getPendingRealHlrRecords, getRealHlrPreview } from "@/lib/services/real-hlr-preview";
-import { prepareDisabledRealHlrQueue } from "@/lib/services/real-hlr-queue-plan";
+import { prepareDisabledRealHlrQueue, REAL_HLR_QUEUE_VERSION } from "@/lib/services/real-hlr-queue-plan";
 import { saveBatchToHistory } from "@/lib/persistence/client-base-save";
 import { buildMasterOutput } from "@/lib/export/xlsx-export";
 import {
@@ -138,6 +138,7 @@ export function ExcelWorkspace() {
   const [realHlrBudget, setRealHlrBudget] = useState("0");
   const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
   const [singleHlrTestMobile, setSingleHlrTestMobile] = useState("");
+  const [hlrSelectionScope, setHlrSelectionScope] = useState<"one" | "all" | null>(null);
   const [isSingleHlrTestConfirmed, setIsSingleHlrTestConfirmed] = useState(false);
   const [isExecutingSingleHlrTest, setIsExecutingSingleHlrTest] = useState(false);
   const [singleHlrTestStatus, setSingleHlrTestStatus] = useState<string | null>(null);
@@ -210,6 +211,12 @@ export function ExcelWorkspace() {
   const pendingRealHlrRecords = useMemo(
     () => cleaning && dataset ? getPendingRealHlrRecords(cleaning, dataset, batch?.provenanceBySourceRow ?? {}, enrichmentOutput) : [],
     [batch?.provenanceBySourceRow, cleaning, dataset, enrichmentOutput],
+  );
+  const hasPreparedSingleHlrSelection = Boolean(
+    batch?.realHlrQueue
+    && batch.realHlrQueue.version === REAL_HLR_QUEUE_VERSION
+    && batch.realHlrQueue.jobs.length === 1
+    && batch.realHlrQueue.jobs[0]?.normalizedMobile === singleHlrTestMobile,
   );
   const importedPreviewRows = useMemo(
     () => dataset?.records.map((record) => ({ id: `preview-${record.sourceRow}`, cells: [String(record.sourceRow), ...record.cells] })) ?? [],
@@ -295,6 +302,9 @@ export function ExcelWorkspace() {
       setIsOverwriteConfirmationOpen(false);
       setIsReplaceConfirmationOpen(false);
       setHistoricalResultStatus(null);
+      setHlrSelectionScope(null);
+      setSingleHlrTestMobile("");
+      setIsSingleHlrTestConfirmed(false);
       setPendingFile(null);
       setActiveModule("importacion");
     } catch (caughtError) {
@@ -339,6 +349,9 @@ export function ExcelWorkspace() {
     setIsNewBatchConfirmationOpen(false);
     setIsReplaceConfirmationOpen(false);
     setHistoricalResultStatus(null);
+    setHlrSelectionScope(null);
+    setSingleHlrTestMobile("");
+    setIsSingleHlrTestConfirmed(false);
     setActiveModule("importacion");
   }
 
@@ -357,6 +370,9 @@ export function ExcelWorkspace() {
     }
 
     setError(null);
+    setHlrSelectionScope(null);
+    setSingleHlrTestMobile("");
+    setIsSingleHlrTestConfirmed(false);
     startCleaning(() => {
       const nextCleaning = cleanDataset(dataset);
       setBatch((currentBatch) => currentBatch && currentBatch.id === batch?.id
@@ -389,6 +405,9 @@ export function ExcelWorkspace() {
     }
 
     setError(null);
+    setHlrSelectionScope(null);
+    setSingleHlrTestMobile("");
+    setIsSingleHlrTestConfirmed(false);
     setIsSimulating(true);
 
     try {
@@ -434,6 +453,9 @@ export function ExcelWorkspace() {
   async function importHistoricalResults(file: File) {
     if (!batch || !dataset || !cleaning) return;
     setError(null);
+    setHlrSelectionScope(null);
+    setSingleHlrTestMobile("");
+    setIsSingleHlrTestConfirmed(false);
     setIsImportingHistorical(true);
     try {
       const merged = await importHistoricalResultsFile({
@@ -477,6 +499,7 @@ export function ExcelWorkspace() {
       const records = getPendingRealHlrRecords(cleaning, dataset, batch.provenanceBySourceRow, enrichmentOutput);
       const queue = prepareDisabledRealHlrQueue({ baseId: batch.id, records, maxQueries, budgetLimit });
       setBatch((current) => current?.id === batch.id ? { ...current, realHlrQueue: queue } : current);
+      setHlrSelectionScope("all");
       setError(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "No se pudo preparar la cola HLR.");
@@ -484,7 +507,7 @@ export function ExcelWorkspace() {
   }
 
   function prepareSingleRealHlrTest() {
-    if (!batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile) return;
+    if (!batch || !singleHlrTestMobile) return;
     const record = pendingRealHlrRecords.find((candidate) => candidate.normalizedMobile === singleHlrTestMobile);
     if (!record) {
       setError("El móvil seleccionado ya no está pendiente. Revísalo antes de preparar la prueba.");
@@ -495,14 +518,34 @@ export function ExcelWorkspace() {
       // future release independently enforces session, quota and idempotency.
       const queue = prepareDisabledRealHlrQueue({ baseId: batch.id, records: [record], maxQueries: 1, budgetLimit: 0 });
       setBatch((current) => current?.id === batch.id ? { ...current, realHlrQueue: queue } : current);
+      setHlrSelectionScope("one");
+      setIsSingleHlrTestConfirmed(false);
       setError(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "No se pudo preparar la prueba individual HLR.");
     }
   }
 
+  function prepareAllRealHlrSelection() {
+    if (!batch || pendingRealHlrRecords.length === 0) return;
+    try {
+      const queue = prepareDisabledRealHlrQueue({
+        baseId: batch.id,
+        records: pendingRealHlrRecords,
+        maxQueries: pendingRealHlrRecords.length,
+        budgetLimit: 0,
+      });
+      setBatch((current) => current?.id === batch.id ? { ...current, realHlrQueue: queue } : current);
+      setHlrSelectionScope("all");
+      setIsSingleHlrTestConfirmed(false);
+      setError(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudo preparar la selección de móviles.");
+    }
+  }
+
   async function executeSingleRealHlrTest() {
-    if (!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile) return;
+    if (!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !batch || !isSingleHlrTestConfirmed || !singleHlrTestMobile || !hasPreparedSingleHlrSelection) return;
     const record = pendingRealHlrRecords.find((candidate) => candidate.normalizedMobile === singleHlrTestMobile);
     if (!record) return setError("El móvil seleccionado ya no está pendiente.");
     setIsExecutingSingleHlrTest(true);
@@ -676,30 +719,40 @@ export function ExcelWorkspace() {
                 return <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"><div><dt className="text-slate-500">Vinculados</dt><dd className="font-semibold text-slate-900">{summary.applied}</dd></div><div><dt className="text-slate-500">Sin resultado</dt><dd className="font-semibold text-amber-900">{summary.missingForBase}</dd></div><div><dt className="text-slate-500">Duplicados</dt><dd className="font-semibold text-amber-900">{summary.duplicateResults}</dd></div><div><dt className="text-slate-500">Inválidos</dt><dd className="font-semibold text-amber-900">{summary.invalidResults}</dd></div><div><dt className="text-slate-500">Sin base</dt><dd className="font-semibold text-amber-900">{summary.resultsWithoutBase}</dd></div><div><dt className="text-slate-500">API real protegida</dt><dd className="font-semibold text-slate-900">{summary.skippedApiReal}</dd></div></dl>;
               })() : null}
             </section>
-            {realHlrPreview ? <section className="mt-5 border border-slate-200 bg-slate-50 p-4" aria-labelledby="real-hlr-title"><div className="flex items-start justify-between gap-3"><div><p id="real-hlr-title" className="text-sm font-semibold text-slate-900">Preparación HLR real</p><p className="mt-1 text-xs leading-5 text-slate-600">Solo usa la columna móvil detectada. El proveedor está deshabilitado y esta fase no transmite números.</p></div><span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span></div><dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><div><dt className="text-slate-500">Móviles válidos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.validRecords}</dd></div><div><dt className="text-slate-500">Móviles únicos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.uniqueMobiles}</dd></div><div><dt className="text-slate-500">Fijos excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.fixedExcluded}</dd></div><div><dt className="text-slate-500">Inválidos o vacíos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.invalidExcluded}</dd></div><div><dt className="text-slate-500">Duplicados excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.duplicateExcluded}</dd></div><div><dt className="text-slate-500">Pendientes</dt><dd className="mt-0.5 font-semibold text-amber-900">{realHlrPreview.pendingQueries}</dd></div><div><dt className="text-slate-500">Resultados reales asociados</dt><dd className="mt-0.5 font-semibold text-emerald-800">{realHlrPreview.enrichedByRealApi}</dd></div></dl>{realHlrPreview.enrichedFromExistingData > 0 ? <p className="mt-3 text-xs leading-5 text-slate-600">{realHlrPreview.enrichedFromExistingData} móviles contienen operadores de Excel o mock, sin evidencia de una consulta real; no se programan automáticamente.</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Límite futuro de consultas<input type="number" min="1" max="10000" value={realHlrLimit} onChange={(event) => setRealHlrLimit(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-700">Tope de gasto declarado<input type="number" min="0" step="0.01" value={realHlrBudget} onChange={(event) => setRealHlrBudget(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label></div><p className="mt-3 text-xs leading-5 text-slate-600">Coste estimado: pendiente de la tarifa oficial por consulta. No se muestra ni se asume un importe.</p><label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isRealHlrQueueConfirmed} onChange={(event) => setIsRealHlrQueueConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que solo quiero preparar una cola bloqueada; no autoriza consultas ni gasto.</label><SecondaryButton type="button" disabled={!isRealHlrQueueConfirmed || realHlrPreview.pendingQueries === 0} onClick={prepareRealHlrQueue} className="mt-3 w-full">Preparar cola bloqueada (sin consultas)</SecondaryButton>{batch?.realHlrQueue ? <p className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">Cola preparada: {batch.realHlrQueue.jobs.length} solicitudes máximas, estado bloqueado. Se conserva al guardar la base y no puede ejecutarse desde esta versión.</p> : null}<p className="mt-3 text-xs leading-5 text-slate-500">Faltan por documentar la autenticación, tarifas, límites, campos de respuesta y semántica de operadores/portabilidad del proveedor.</p></section> : null}
-            {realHlrPreview && firstRealSozarTestUiEnabled ? (
-              <section className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4" aria-labelledby="single-hlr-test-title">
+            {realHlrPreview ? (
+              <section className="mt-5 rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="sozar-selection-title">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p id="single-hlr-test-title" className="text-sm font-semibold text-slate-900">Prueba administrativa controlada</p>
-                    <p className="mt-1 text-xs leading-5 text-slate-600">Selecciona exactamente un móvil pendiente. La consulta solo se enviará tras tu confirmación explícita y puede generar un cargo real.</p>
+                    <p id="sozar-selection-title" className="text-sm font-semibold text-slate-900">Selección de móviles para Sozar</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">Preparar una selección no transmite móviles ni inicia consultas. Solo se incluyen móviles españoles válidos, únicos y pendientes.</p>
                   </div>
-                  <span className="border border-blue-200 bg-white px-2 py-1 text-[10px] font-bold tracking-wide text-blue-900">1 MÁXIMO</span>
+                  <span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span>
                 </div>
-                <label className="mt-3 block text-xs font-semibold text-slate-700">
-                  Móvil válido seleccionado
-                  <select value={singleHlrTestMobile} onChange={(event) => setSingleHlrTestMobile(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
-                    <option value="">Seleccionar un móvil pendiente</option>
-                    {pendingRealHlrRecords.map((record) => <option key={record.normalizedMobile} value={record.normalizedMobile}>{maskMobile(record.normalizedMobile)}</option>)}
-                  </select>
-                </label>
-                <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que autorizo una única consulta potencialmente facturable; no habrá reintentos automáticos.</label>
-                <SecondaryButton type="button" disabled={!singleHlrTestMobile || !isSingleHlrTestConfirmed} onClick={prepareSingleRealHlrTest} className="mt-3 w-full">Preparar una única prueba (sin red)</SecondaryButton>
-                <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !singleHlrTestMobile || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-2 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
-                <p className="mt-2 text-xs leading-5 text-slate-600">{firstRealSozarTestUiEnabled && isSingleHlrTestReady ? "La confirmación autoriza una única petición potencialmente facturable." : "La configuración privada del servidor aún no está lista; no se puede ejecutar la consulta."}</p>
-                {singleHlrTestStatus ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-slate-700">Estado: {singleHlrTestStatus}</p> : null}
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs font-semibold text-slate-700">
+                    Seleccionar un móvil válido para prueba
+                    <select value={singleHlrTestMobile} onChange={(event) => { setSingleHlrTestMobile(event.target.value); setIsSingleHlrTestConfirmed(false); }} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal">
+                      <option value="">Seleccionar un móvil pendiente</option>
+                      {pendingRealHlrRecords.map((record) => <option key={record.normalizedMobile} value={record.normalizedMobile}>{maskMobile(record.normalizedMobile)}</option>)}
+                    </select>
+                  </label>
+                  <div className="flex flex-col justify-end gap-2">
+                    <SecondaryButton type="button" disabled={!singleHlrTestMobile} onClick={prepareSingleRealHlrTest}>Seleccionar este móvil (sin consultas)</SecondaryButton>
+                    <SecondaryButton type="button" disabled={pendingRealHlrRecords.length === 0} onClick={prepareAllRealHlrSelection}>Seleccionar todos los pendientes ({pendingRealHlrRecords.length})</SecondaryButton>
+                  </div>
+                </div>
+                {batch?.realHlrQueue ? <p aria-live="polite" className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">{hlrSelectionScope === "one" ? "Selección individual preparada" : "Selección de todos preparada"}: {batch.realHlrQueue.jobs.length} móvil{batch.realHlrQueue.jobs.length === 1 ? "" : "es"}. Estado {batch.realHlrQueue.status}; no existe ejecución masiva en esta versión.</p> : null}
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <p className="text-xs font-semibold text-slate-800">Prueba administrativa de un único móvil</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Requiere que la selección anterior contenga exactamente un móvil y una confirmación explícita. El permiso excepcional no se puede reutilizar para la selección completa.</p>
+                  <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} disabled={!hasPreparedSingleHlrSelection} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que autorizo una única consulta potencialmente facturable, sin reintentos automáticos.</label>
+                  <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !hasPreparedSingleHlrSelection || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-3 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">La ejecución está bloqueada por código. Preparar Uno o Todos nunca abre las puertas de Sozar ni realiza una solicitud.</p>
+                  {singleHlrTestStatus ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-slate-700">Estado: {singleHlrTestStatus}</p> : null}
+                </div>
               </section>
             ) : null}
+            {realHlrPreview ? <section className="mt-5 border border-slate-200 bg-slate-50 p-4" aria-labelledby="real-hlr-title"><div className="flex items-start justify-between gap-3"><div><p id="real-hlr-title" className="text-sm font-semibold text-slate-900">Preparación HLR real</p><p className="mt-1 text-xs leading-5 text-slate-600">Solo usa la columna móvil detectada. El proveedor está deshabilitado y esta fase no transmite números.</p></div><span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span></div><dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><div><dt className="text-slate-500">Móviles válidos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.validRecords}</dd></div><div><dt className="text-slate-500">Móviles únicos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.uniqueMobiles}</dd></div><div><dt className="text-slate-500">Fijos excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.fixedExcluded}</dd></div><div><dt className="text-slate-500">Inválidos o vacíos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.invalidExcluded}</dd></div><div><dt className="text-slate-500">Duplicados excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.duplicateExcluded}</dd></div><div><dt className="text-slate-500">Pendientes</dt><dd className="mt-0.5 font-semibold text-amber-900">{realHlrPreview.pendingQueries}</dd></div><div><dt className="text-slate-500">Resultados reales asociados</dt><dd className="mt-0.5 font-semibold text-emerald-800">{realHlrPreview.enrichedByRealApi}</dd></div></dl>{realHlrPreview.enrichedFromExistingData > 0 ? <p className="mt-3 text-xs leading-5 text-slate-600">{realHlrPreview.enrichedFromExistingData} móviles contienen operadores de Excel o mock, sin evidencia de una consulta real; no se programan automáticamente.</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Límite futuro de consultas<input type="number" min="1" max="10000" value={realHlrLimit} onChange={(event) => setRealHlrLimit(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-700">Tope de gasto declarado<input type="number" min="0" step="0.01" value={realHlrBudget} onChange={(event) => setRealHlrBudget(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label></div><p className="mt-3 text-xs leading-5 text-slate-600">Coste estimado: pendiente de la tarifa oficial por consulta. No se muestra ni se asume un importe.</p><label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isRealHlrQueueConfirmed} onChange={(event) => setIsRealHlrQueueConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que solo quiero preparar una cola bloqueada; no autoriza consultas ni gasto.</label><SecondaryButton type="button" disabled={!isRealHlrQueueConfirmed || realHlrPreview.pendingQueries === 0} onClick={prepareRealHlrQueue} className="mt-3 w-full">Preparar cola bloqueada (sin consultas)</SecondaryButton>{batch?.realHlrQueue ? <p className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">Cola preparada: {batch.realHlrQueue.jobs.length} solicitudes máximas, estado bloqueado. Se conserva al guardar la base y no puede ejecutarse desde esta versión.</p> : null}<p className="mt-3 text-xs leading-5 text-slate-500">Faltan por documentar la autenticación, tarifas, límites, campos de respuesta y semántica de operadores/portabilidad del proveedor.</p></section> : null}
             <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950"><input type="checkbox" checked={isDemoMode} onChange={(event) => setIsDemoMode(event.target.checked)} className="mt-0.5 accent-amber-700" /><span><span className="font-semibold">Usar mock en modo demostración</span><span className="mt-0.5 block text-xs leading-5 text-amber-900">Genera datos simulados solo para registros pendientes; se guardarán con procedencia MOCK.</span></span></label>
             <PrimaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleSimulateEnrichment} className="mt-5 w-full">{isSimulating ? "Enriqueciendo…" : "Enriquecer base"}</PrimaryButton>
             {hasExistingEnrichment ? <SecondaryButton type="button" disabled={cleaning.validRecords.length === 0 || isSimulating} onClick={handleRefreshOperators} className="mt-2 w-full">Actualizar operadores</SecondaryButton> : null}
