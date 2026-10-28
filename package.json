@@ -9,7 +9,7 @@
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --conditions=react-server --experimental-strip-types --test tests/excel-processing.test.ts tests/auth-access.test.ts tests/password-hash.test.ts tests/persistence.test.ts tests/recycling.test.ts tests/real-hlr-preparation.test.ts tests/security-controls.test.ts tests/audit-implementation.test.ts tests/migration-order.test.ts tests/safe-migration.test.ts tests/safe-migrate-launcher.test.ts tests/sozar-response-contract.test.ts tests/sozar-single-test.test.ts tests/sozar-first-real-control.test.ts",
+    "test": "node --conditions=react-server --experimental-strip-types --test tests/excel-processing.test.ts tests/crm-scale.test.ts tests/auth-access.test.ts tests/password-hash.test.ts tests/persistence.test.ts tests/recycling.test.ts tests/real-hlr-preparation.test.ts tests/security-controls.test.ts tests/audit-implementation.test.ts tests/migration-order.test.ts tests/safe-migration.test.ts tests/safe-migrate-launcher.test.ts tests/sozar-response-contract.test.ts tests/sozar-single-test.test.ts tests/sozar-first-real-control.test.ts",
     "auth:provision-admin": "node --conditions=react-server --experimental-strip-types scripts/provision-admin.ts",
     "auth:verify-admin": "node --conditions=react-server --experimental-strip-types scripts/verify-admin-user.ts",
     "auth:generate-secret": "node --experimental-strip-types scripts/create-auth-secret.ts",

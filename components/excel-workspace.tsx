@@ -52,7 +52,7 @@ function maskMobile(mobile: string): string {
 }
 
 /** UI visibility only; server authorization, reservation and transport gates remain authoritative. */
-const firstRealSozarTestUiEnabled = true;
+const firstRealSozarTestUiEnabled = false;
 
 function ModuleHeading({
   eyebrow,
@@ -134,7 +134,7 @@ export function ExcelWorkspace() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [isImportingHistorical, setIsImportingHistorical] = useState(false);
   const [historicalResultStatus, setHistoricalResultStatus] = useState<HistoricalResultImportSummary | null>(null);
-  const [realHlrLimit, setRealHlrLimit] = useState("100");
+  const [realHlrLimit, setRealHlrLimit] = useState("10000");
   const [realHlrBudget, setRealHlrBudget] = useState("0");
   const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
   const [singleHlrTestMobile, setSingleHlrTestMobile] = useState("");
@@ -210,6 +210,18 @@ export function ExcelWorkspace() {
   const pendingRealHlrRecords = useMemo(
     () => cleaning && dataset ? getPendingRealHlrRecords(cleaning, dataset, batch?.provenanceBySourceRow ?? {}, enrichmentOutput) : [],
     [batch?.provenanceBySourceRow, cleaning, dataset, enrichmentOutput],
+  );
+  const importedPreviewRows = useMemo(
+    () => dataset?.records.map((record) => ({ id: `preview-${record.sourceRow}`, cells: [String(record.sourceRow), ...record.cells] })) ?? [],
+    [dataset],
+  );
+  const excludedPreviewRows = useMemo(
+    () => cleaning?.excludedRecords.map((record) => ({ id: `excluded-${record.sourceRow}`, cells: [String(record.sourceRow), record.mobile, record.name, exclusionReasonLabels[record.reason]] })) ?? [],
+    [cleaning],
+  );
+  const enrichmentPreviewRows = useMemo(
+    () => enrichmentOutput?.rows.map((record) => ({ id: `enriched-${record.sourceRow}`, cells: record.cells })) ?? [],
+    [enrichmentOutput],
   );
 
   useEffect(() => {
@@ -462,7 +474,7 @@ export function ExcelWorkspace() {
     const maxQueries = Number(realHlrLimit);
     const budgetLimit = Number(realHlrBudget);
     try {
-      const records = getPendingRealHlrRecords(cleaning, dataset, batch.provenanceBySourceRow);
+      const records = getPendingRealHlrRecords(cleaning, dataset, batch.provenanceBySourceRow, enrichmentOutput);
       const queue = prepareDisabledRealHlrQueue({ baseId: batch.id, records, maxQueries, budgetLimit });
       setBatch((current) => current?.id === batch.id ? { ...current, realHlrQueue: queue } : current);
       setError(null);
@@ -556,7 +568,7 @@ export function ExcelWorkspace() {
               <PrimaryButton type="button" disabled={isImporting} onClick={() => fileInputRef.current?.click()} className="mt-5">
                 {isImporting ? "Leyendo Excel…" : "Subir Excel"}
               </PrimaryButton>
-              <p className="mt-4 text-xs leading-5 text-slate-500">Formato admitido: .xlsx · Los encabezados se detectan de manera flexible.</p>
+              <p className="mt-4 text-xs leading-5 text-slate-500">Formato admitido: .xlsx de hasta 25 MB · Una base puede guardar hasta 10.000 registros; el límite de 100 aplica solo a los lotes de distribución.</p>
               <p aria-live="polite" className="sr-only">{isImporting ? "Importando archivo Excel" : ""}</p>
             </div>
           </section>
@@ -581,7 +593,7 @@ export function ExcelWorkspace() {
             </div>
             {dataset.columnMapping.nombre === undefined ? <p role="status" className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">No hay columna de nombre: se validarán móvil, formato y duplicados. La regla de nombre vacío solo se aplica cuando esa columna existe.</p> : null}
             <div className="mt-5">
-              <DataTable caption="Vista previa de registros importados" columns={["Fila", ...dataset.columns]} rows={dataset.records.map((record) => ({ id: `preview-${record.sourceRow}`, cells: [String(record.sourceRow), ...record.cells] }))} emptyMessage="El archivo no contiene registros debajo de los encabezados." />
+              <DataTable caption="Vista previa de registros importados" columns={["Fila", ...dataset.columns]} rows={importedPreviewRows} emptyMessage="El archivo no contiene registros debajo de los encabezados." />
             </div>
           </section>
         ) : null}
@@ -604,8 +616,6 @@ export function ExcelWorkspace() {
           action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton> : <SecondaryButton type="button" disabled={isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
         />
 
-        {dataset.columnMapping.nombre === undefined ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No se puede continuar: falta la columna “Nombres” o “Nombre” en el Excel.</div> : null}
-
         {cleaning ? (
           <>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -624,7 +634,7 @@ export function ExcelWorkspace() {
               <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                 <p className="text-sm font-semibold text-slate-900">Registros excluidos</p>
                 <p className="mt-1 text-sm text-slate-600">Estos registros no se envían a la simulación.</p>
-                <div className="mt-4"><DataTable caption="Registros excluidos durante la limpieza" columns={["Fila", "Móvil original", "Nombre", "Motivo"]} rows={cleaning.excludedRecords.map((record) => ({ id: `excluded-${record.sourceRow}`, cells: [String(record.sourceRow), record.mobile, record.name, exclusionReasonLabels[record.reason]] }))} emptyMessage="No hay registros excluidos." /></div>
+                <div className="mt-4"><DataTable caption="Registros excluidos durante la limpieza" columns={["Fila", "Móvil original", "Nombre", "Motivo"]} rows={excludedPreviewRows} emptyMessage="No hay registros excluidos." /></div>
               </section>
             </div>
           </>
@@ -667,7 +677,7 @@ export function ExcelWorkspace() {
               })() : null}
             </section>
             {realHlrPreview ? <section className="mt-5 border border-slate-200 bg-slate-50 p-4" aria-labelledby="real-hlr-title"><div className="flex items-start justify-between gap-3"><div><p id="real-hlr-title" className="text-sm font-semibold text-slate-900">Preparación HLR real</p><p className="mt-1 text-xs leading-5 text-slate-600">Solo usa la columna móvil detectada. El proveedor está deshabilitado y esta fase no transmite números.</p></div><span className="border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold tracking-wide text-amber-900">SIN RED</span></div><dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 text-xs"><div><dt className="text-slate-500">Móviles válidos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.validRecords}</dd></div><div><dt className="text-slate-500">Móviles únicos</dt><dd className="mt-0.5 font-semibold text-slate-900">{realHlrPreview.uniqueMobiles}</dd></div><div><dt className="text-slate-500">Fijos excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.fixedExcluded}</dd></div><div><dt className="text-slate-500">Inválidos o vacíos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.invalidExcluded}</dd></div><div><dt className="text-slate-500">Duplicados excluidos</dt><dd className="mt-0.5 font-semibold text-rose-800">{realHlrPreview.duplicateExcluded}</dd></div><div><dt className="text-slate-500">Pendientes</dt><dd className="mt-0.5 font-semibold text-amber-900">{realHlrPreview.pendingQueries}</dd></div><div><dt className="text-slate-500">Resultados reales asociados</dt><dd className="mt-0.5 font-semibold text-emerald-800">{realHlrPreview.enrichedByRealApi}</dd></div></dl>{realHlrPreview.enrichedFromExistingData > 0 ? <p className="mt-3 text-xs leading-5 text-slate-600">{realHlrPreview.enrichedFromExistingData} móviles contienen operadores de Excel o mock, sin evidencia de una consulta real; no se programan automáticamente.</p> : null}<div className="mt-4 grid gap-2 sm:grid-cols-2"><label className="text-xs font-semibold text-slate-700">Límite futuro de consultas<input type="number" min="1" max="10000" value={realHlrLimit} onChange={(event) => setRealHlrLimit(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label><label className="text-xs font-semibold text-slate-700">Tope de gasto declarado<input type="number" min="0" step="0.01" value={realHlrBudget} onChange={(event) => setRealHlrBudget(event.target.value)} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal" /></label></div><p className="mt-3 text-xs leading-5 text-slate-600">Coste estimado: pendiente de la tarifa oficial por consulta. No se muestra ni se asume un importe.</p><label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isRealHlrQueueConfirmed} onChange={(event) => setIsRealHlrQueueConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que solo quiero preparar una cola bloqueada; no autoriza consultas ni gasto.</label><SecondaryButton type="button" disabled={!isRealHlrQueueConfirmed || realHlrPreview.pendingQueries === 0} onClick={prepareRealHlrQueue} className="mt-3 w-full">Preparar cola bloqueada (sin consultas)</SecondaryButton>{batch?.realHlrQueue ? <p className="mt-3 border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-900">Cola preparada: {batch.realHlrQueue.jobs.length} solicitudes máximas, estado bloqueado. Se conserva al guardar la base y no puede ejecutarse desde esta versión.</p> : null}<p className="mt-3 text-xs leading-5 text-slate-500">Faltan por documentar la autenticación, tarifas, límites, campos de respuesta y semántica de operadores/portabilidad del proveedor.</p></section> : null}
-            {realHlrPreview ? (
+            {realHlrPreview && firstRealSozarTestUiEnabled ? (
               <section className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4" aria-labelledby="single-hlr-test-title">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -708,7 +718,7 @@ export function ExcelWorkspace() {
               <div><p className="text-sm font-semibold text-slate-900">Resultados de enriquecimiento</p><p className="mt-1 text-sm text-slate-600">La salida conserva las columnas originales y su orden.</p></div>
               <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-bold tracking-wide text-amber-900">PROCEDENCIA POR REGISTRO</span>
             </div>
-            {enrichmentOutput ? <div className="mt-5"><DataTable caption="Resultados de enriquecimiento" columns={enrichmentOutput.columns} rows={enrichmentOutput.rows.map((record) => ({ id: `enriched-${record.sourceRow}`, cells: record.cells }))} emptyMessage="Todavía no hay resultados." /></div> : <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">Cuando enriquezcas la base, los resultados aparecerán aquí.</div>}
+            {enrichmentOutput ? <div className="mt-5"><DataTable caption="Resultados de enriquecimiento" columns={enrichmentOutput.columns} rows={enrichmentPreviewRows} emptyMessage="Todavía no hay resultados." /></div> : <div className="mt-5 rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">Cuando enriquezcas la base, los resultados aparecerán aquí.</div>}
           </section>
         </div>
       </section>
