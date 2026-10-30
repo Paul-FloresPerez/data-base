@@ -5,6 +5,7 @@ import { enrichmentScalars, type SaveStartPayload, type SavedLot, type StoredMet
 import { prisma } from "@/lib/server/prisma";
 import { appendBaseLifecycleEvents } from "@/lib/server/audit-storage";
 import { formatBaseCode } from "@/lib/base-history/catalog";
+import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -120,6 +121,10 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
           },
           update: {},
         });
+      }
+      if (baseMetadata.recyclingExecutionId) {
+        if (!base.baseOriginalId) throw new Error("Una ejecución de reciclaje requiere una base original.");
+        await linkGeneratedRecycledBase(transaction, { executionId: baseMetadata.recyclingExecutionId, baseId, baseOriginalId: base.baseOriginalId });
       }
       await transaction.base.update({ where: { id: baseId }, data: { metadatos: { ...baseMetadata, completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
       await appendBaseLifecycleEvents(transaction, { baseId, userId, metadata: baseMetadata, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos, lots });

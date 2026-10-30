@@ -27,6 +27,8 @@ export interface WorkingBatch {
   receivedAt: string | null;
   /** Required when a future recycled base is saved from one original base. */
   originalBaseId: string | null;
+  /** Immutable server execution that selected this recycled base. */
+  recyclingExecutionId: string | null;
   distribution: DistributionSettings;
   enrichmentOutput: EnrichmentOutput | null;
   /** Read-only historical Excel reconciliation; never represents API traffic. */
@@ -90,6 +92,7 @@ export function createWorkingBatch(
     displayName: dataset.fileName.replace(/\.xlsx$/i, ""),
     receivedAt: null,
     originalBaseId: null,
+    recyclingExecutionId: null,
     createdAt,
     dataset,
     cleaning: null,

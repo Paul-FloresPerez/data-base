@@ -8,19 +8,22 @@ export const knownTipifications = [...candidateTipifications, ...followUpTipific
 
 export type RecyclingBucket = "candidato" | "seguimiento" | "revision" | "bloqueado";
 export interface RecyclingInput { fileName: string; zipName?: string; internalPath?: string; sheetName?: string; columns: string[]; rows: string[][] }
-export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; bucket: RecyclingBucket; reviewReason?: string }
+export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; confirmedSale: boolean; saleEvidence?: string; bucket: RecyclingBucket; reviewReason?: string }
 export interface RecyclingAnalysis { columns: string[]; records: RecyclingRecord[]; winners: RecyclingRecord[]; counts: Record<RecyclingBucket | "duplicados" | "moviles", number>; tipifications: Record<string, number>; files: string[] }
 
 const aliases: Record<string, string[]> = {
   mobile: ["telefonomovil", "telefonosmovil", "movil", "móvil", "celular"],
   tipification: ["tipificacion", "tipificación", "resultado"],
   date: ["fecha", "fechagestion", "fecha gestión", "fecha instalacion", "fechainstalacion"],
-  opposition: ["oposicion", "oposición", "bloqueado", "bloqueo", "venta", "exclusion comercial", "exclusión comercial", "no llamar"],
+  opposition: ["oposicion", "oposición", "bloqueado", "bloqueo", "exclusion comercial", "exclusión comercial", "no llamar"],
+  confirmedSale: ["ventaconfirmada", "estadoventaconfirmada", "ventacerrada"],
+  ambiguousSale: ["venta", "estadoventa"],
 };
 const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-ES").replace(/[^a-z0-9]/g, "");
 function column(columns: string[], field: keyof typeof aliases) { return columns.findIndex((header) => aliases[field].includes(normalize(header))); }
 function dateValue(value: string) { const time = Date.parse(value); return Number.isFinite(time) ? time : -1; }
 function isBlocked(value: string) { return /\b(si|sí|true)\b|bloque|oposici|venta|exclu|no llamar/i.test(value); }
+function isConfirmedSale(value: string) { return /^(si|sí|true|confirmada|confirmado|cerrada|cerrado)$/i.test(value.trim()); }
 function bucket(tipification: string, blocked: boolean, known: boolean): RecyclingBucket {
   if (blocked) return "bloqueado";
   if (candidateTipifications.includes(tipification as never)) return "candidato";
@@ -33,13 +36,15 @@ export function analyzeRecyclingFiles(inputs: RecyclingInput[]): RecyclingAnalys
   for (const input of inputs) input.columns.forEach((header) => { if (!union.has(header)) union.set(header, union.size); });
   for (const input of inputs) {
     files.push(input.fileName);
-    const mobileIndex = column(input.columns, "mobile"), tipIndex = column(input.columns, "tipification"), dateIndex = column(input.columns, "date"), blockIndex = column(input.columns, "opposition");
+    const mobileIndex = column(input.columns, "mobile"), tipIndex = column(input.columns, "tipification"), dateIndex = column(input.columns, "date"), blockIndex = column(input.columns, "opposition"), confirmedSaleIndex = column(input.columns, "confirmedSale"), ambiguousSaleIndex = column(input.columns, "ambiguousSale");
     for (const [index, cells] of input.rows.entries()) {
       const mobile = normalizeSpanishMobile(cells[mobileIndex] ?? ""); if (!mobile) continue;
       const tipification = (cells[tipIndex] ?? "").trim().toLocaleUpperCase("es-ES"); const known = knownTipifications.includes(tipification as never);
-      const blocked = blockIndex >= 0 && isBlocked(cells[blockIndex] ?? "");
+      const confirmedSale = confirmedSaleIndex >= 0 && isConfirmedSale(cells[confirmedSaleIndex] ?? "");
+      const ambiguousSale = ambiguousSaleIndex >= 0 && Boolean((cells[ambiguousSaleIndex] ?? "").trim()) && !confirmedSale;
+      const blocked = (blockIndex >= 0 && isBlocked(cells[blockIndex] ?? "")) || confirmedSale;
       const aligned = [...union.keys()].map((header) => cells[input.columns.indexOf(header)] ?? "");
-      all.push({ mobile, sourceRow: internalRow++, originRow: index + 2, sheetName: input.sheetName ?? "Datos", cells: aligned, fileName: input.fileName, zipName: input.zipName, internalPath: input.internalPath, date: cells[dateIndex] ?? "", tipification, bucket: bucket(tipification, blocked, known), reviewReason: blocked ? "Bloqueo/oposición indicado por el CRM" : blockIndex < 0 ? "El CRM no aporta oposición, bloqueo, venta ni exclusión comercial" : known ? undefined : "Tipificación desconocida" });
+      all.push({ mobile, sourceRow: internalRow++, originRow: index + 2, sheetName: input.sheetName ?? "Datos", cells: aligned, fileName: input.fileName, zipName: input.zipName, internalPath: input.internalPath, date: cells[dateIndex] ?? "", tipification, confirmedSale, saleEvidence: confirmedSale ? "Venta confirmada indicada por el archivo CRM" : undefined, bucket: bucket(tipification, blocked, known), reviewReason: blocked ? (confirmedSale ? "Venta confirmada indicada por el CRM" : "Bloqueo/oposición indicado por el CRM") : ambiguousSale ? "Dato de venta ambiguo; requiere revisión" : blockIndex < 0 ? "El CRM no aporta oposición, bloqueo ni exclusión comercial" : known ? undefined : "Tipificación desconocida" });
     }
   }
   const winnersByMobile = new Map<string, RecyclingRecord>();

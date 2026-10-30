@@ -50,6 +50,23 @@ enum TipoBase {
   RECICLADA
 }
 
+enum EstadoEjecucionReciclaje {
+  PREPARADA
+  EVALUANDO
+  EVALUADA
+  BASE_GENERADA
+  ERROR
+}
+
+enum EstadoResultadoReciclaje {
+  ELEGIBLE
+  BLOQUEADO_VENTA
+  REVISION_GESTION
+  REVISION_CONFLICTO
+  REVISION_PERMANENCIA
+  FUERA_RANGO_HISTORICO
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
   codigo              String     @unique
@@ -72,6 +89,8 @@ model Base {
   lotesComoOriginal   Lote[]     @relation("LoteBaseOriginal")
   archivosTipificaciones ArchivoTipificaciones[]
   ejecucionesReciclaje EjecucionReciclaje[]
+  ejecucionGeneradora EjecucionReciclaje? @relation("BaseReciclada")
+  gestionesTipificacion GestionTipificacion[]
   eventosAuditoria    EventoAuditoria[]
   exportaciones       RegistroExportacion[]
   aprobacionesHlr     AprobacionHlr[]
@@ -99,6 +118,7 @@ model Registro {
   base                Base                  @relation(fields: [baseId], references: [id], onDelete: Cascade)
   lotes               LoteRegistro[]
   destinosHlr         ConsultaHlrRegistro[]
+  resultadosReciclaje ResultadoEjecucionReciclaje[]
 
   @@unique([baseId, numeroFilaOriginal])
   @@index([baseId])
@@ -142,6 +162,7 @@ model ArchivoTipificaciones {
   importadoEn     DateTime @default(now()) @map("importado_en")
   resumen         Json
   base            Base     @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  gestiones       GestionTipificacion[]
 
   @@index([baseId, importadoEn])
   @@map("archivos_tipificaciones")
@@ -149,15 +170,65 @@ model ArchivoTipificaciones {
 
 /// Future recycling executions must reference exactly one manually selected original base.
 model EjecucionReciclaje {
-  id              String   @id @default(uuid()) @db.Uuid
-  baseOriginalId  String   @map("base_original_id") @db.Uuid
-  estado          String   @default("PREPARADA")
+  id              String                    @id @default(uuid()) @db.Uuid
+  operacionId     String                    @unique @map("operacion_id")
+  baseOriginalId  String                    @map("base_original_id") @db.Uuid
+  baseRecicladaId String?                   @unique @map("base_reciclada_id") @db.Uuid
+  fechaEfectiva   DateTime                  @map("fecha_efectiva") @db.Date
+  estado          EstadoEjecucionReciclaje  @default(PREPARADA)
   metadatos       Json
-  creadoEn        DateTime @default(now()) @map("creado_en")
-  baseOriginal    Base     @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
+  creadoEn        DateTime                  @default(now()) @map("creado_en")
+  baseOriginal    Base                      @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
+  baseReciclada   Base?                     @relation("BaseReciclada", fields: [baseRecicladaId], references: [id], onDelete: Restrict)
+  gestiones       GestionTipificacion[]
+  resultados      ResultadoEjecucionReciclaje[]
 
   @@index([baseOriginalId, creadoEn])
   @@map("ejecuciones_reciclaje")
+}
+
+/// Immutable CRM management history. A later import never replaces an earlier row.
+model GestionTipificacion {
+  id                    String   @id @default(uuid()) @db.Uuid
+  archivoId             String   @map("archivo_id") @db.Uuid
+  ejecucionOrigenId     String?  @map("ejecucion_origen_id") @db.Uuid
+  baseOriginalId        String   @map("base_original_id") @db.Uuid
+  numeroFilaOrigen      Int      @map("numero_fila_origen")
+  movilNormalizado      String   @map("movil_normalizado")
+  fechaGestion          DateTime? @map("fecha_gestion") @db.Date
+  tipificacionOriginal  String?  @map("tipificacion_original")
+  tipificacionNormalizada String? @map("tipificacion_normalizada")
+  ventaConfirmada       Boolean  @default(false) @map("venta_confirmada")
+  evidenciaVenta        String?  @map("evidencia_venta")
+  metadatos             Json
+  creadoEn              DateTime @default(now()) @map("creado_en")
+  archivo               ArchivoTipificaciones @relation(fields: [archivoId], references: [id], onDelete: Restrict)
+  ejecucionOrigen       EjecucionReciclaje? @relation(fields: [ejecucionOrigenId], references: [id], onDelete: Restrict)
+  baseOriginal          Base     @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
+  resultadosGanadores   ResultadoEjecucionReciclaje[] @relation("GestionGanadora")
+
+  @@unique([archivoId, numeroFilaOrigen])
+  @@index([baseOriginalId, movilNormalizado])
+  @@index([baseOriginalId, fechaGestion])
+  @@map("gestiones_tipificacion")
+}
+
+/// Snapshot of an execution. Re-evaluating later creates a new immutable set.
+model ResultadoEjecucionReciclaje {
+  id                    String   @id @default(uuid()) @db.Uuid
+  ejecucionId           String   @map("ejecucion_id") @db.Uuid
+  registroOriginalId    String   @map("registro_original_id") @db.Uuid
+  gestionGanadoraId     String?  @map("gestion_ganadora_id") @db.Uuid
+  estado                EstadoResultadoReciclaje
+  motivo                String
+  creadoEn              DateTime @default(now()) @map("creado_en")
+  ejecucion             EjecucionReciclaje @relation(fields: [ejecucionId], references: [id], onDelete: Restrict)
+  registroOriginal      Registro @relation(fields: [registroOriginalId], references: [id], onDelete: Restrict)
+  gestionGanadora       GestionTipificacion? @relation("GestionGanadora", fields: [gestionGanadoraId], references: [id], onDelete: Restrict)
+
+  @@unique([ejecucionId, registroOriginalId])
+  @@index([ejecucionId, estado])
+  @@map("resultados_ejecuciones_reciclaje")
 }
 
 model LoteRegistro {

@@ -52,6 +52,7 @@ export interface StoredMetadata {
   historicalResultImports?: HistoricalResultImportSummary[];
   receivedAt?: string | null;
   originalBaseId?: string | null;
+  recyclingExecutionId?: string | null;
 }
 
 export interface SaveStartPayload {
@@ -168,6 +169,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         historicalResultImports: batch.historicalResultImports,
         receivedAt: batch.receivedAt,
         originalBaseId: batch.originalBaseId,
+        recyclingExecutionId: batch.recyclingExecutionId,
       },
     },
     records,
@@ -225,6 +227,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     displayName: base.name,
     receivedAt: base.receivedAt ?? base.metadata.receivedAt ?? null,
     originalBaseId: base.originalBaseId ?? base.metadata.originalBaseId ?? null,
+    recyclingExecutionId: base.metadata.recyclingExecutionId ?? null,
     createdAt: base.createdAt,
     dataset,
     cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
