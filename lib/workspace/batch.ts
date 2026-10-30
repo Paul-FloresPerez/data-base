@@ -23,10 +23,16 @@ export interface WorkingBatch {
   dataset: ImportedDataset;
   /** User-facing name, kept apart from the immutable original file name. */
   displayName?: string;
+  /** Historic reception is user-entered and never inferred from import time. */
+  receivedAt: string | null;
+  /** Required when a future recycled base is saved from one original base. */
+  originalBaseId: string | null;
   distribution: DistributionSettings;
   enrichmentOutput: EnrichmentOutput | null;
   /** Read-only historical Excel reconciliation; never represents API traffic. */
   historicalResultImport: HistoricalResultImportSummary | null;
+  /** Append-only references to each imported historical tipification file. */
+  historicalResultImports: HistoricalResultImportSummary[];
   /** Set only after an export file is successfully generated and download is initiated locally. */
   exportCompletedAt: string | null;
   fileName: string;
@@ -82,11 +88,14 @@ export function createWorkingBatch(
     kind: "ORIGINAL",
     fileName: dataset.fileName,
     displayName: dataset.fileName.replace(/\.xlsx$/i, ""),
+    receivedAt: null,
+    originalBaseId: null,
     createdAt,
     dataset,
     cleaning: null,
     enrichmentOutput: null,
     historicalResultImport: null,
+    historicalResultImports: [],
     exportCompletedAt: null,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
     realHlrConsultationsByMobile: {},

@@ -45,9 +45,19 @@ enum EstadoExportacion {
   ENTREGADO_CONFIRMADO
 }
 
+enum TipoBase {
+  ORIGINAL
+  RECICLADA
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
+  codigo              String     @unique
   nombreOriginal      String     @map("nombre_original")
+  nombreDescriptivo   String     @map("nombre_descriptivo")
+  fechaRecepcion      DateTime?  @map("fecha_recepcion") @db.Date
+  tipo                TipoBase   @default(ORIGINAL)
+  baseOriginalId      String?    @map("base_original_id") @db.Uuid
   creadoEn            DateTime   @default(now()) @map("creado_en")
   actualizadoEn       DateTime   @updatedAt @map("actualizado_en")
   estado              EstadoBase @default(LISTA_PARA_LIMPIAR)
@@ -56,13 +66,20 @@ model Base {
   cantidadExcluidos   Int        @default(0) @map("cantidad_excluidos")
   metadatos           Json
   registros           Registro[]
-  lotes               Lote[]
+  baseOriginal        Base?      @relation("BaseOriginal", fields: [baseOriginalId], references: [id], onDelete: Restrict)
+  basesDerivadas      Base[]     @relation("BaseOriginal")
+  lotes               Lote[]     @relation("LoteBase")
+  lotesComoOriginal   Lote[]     @relation("LoteBaseOriginal")
+  archivosTipificaciones ArchivoTipificaciones[]
+  ejecucionesReciclaje EjecucionReciclaje[]
   eventosAuditoria    EventoAuditoria[]
   exportaciones       RegistroExportacion[]
   aprobacionesHlr     AprobacionHlr[]
   destinosHlr         ConsultaHlrRegistro[]
 
   @@index([estado])
+  @@index([tipo, fechaRecepcion])
+  @@index([baseOriginalId])
   @@map("bases")
 }
 
@@ -93,16 +110,54 @@ model Registro {
 model Lote {
   id                  String         @id @default(uuid()) @db.Uuid
   baseId              String         @map("base_id") @db.Uuid
+  baseOriginalId      String?        @map("base_original_id") @db.Uuid
   campana             Campana
   numeroLote          Int            @map("numero_lote")
   cantidadRegistros   Int            @default(0) @map("cantidad_registros")
   creadoEn            DateTime       @default(now()) @map("creado_en")
-  base                Base           @relation(fields: [baseId], references: [id], onDelete: Cascade)
+  base                Base           @relation("LoteBase", fields: [baseId], references: [id], onDelete: Cascade)
+  baseOriginal        Base?          @relation("LoteBaseOriginal", fields: [baseOriginalId], references: [id], onDelete: Restrict)
   registros           LoteRegistro[]
 
   @@unique([baseId, campana, numeroLote])
   @@index([baseId])
+  @@index([baseOriginalId])
   @@map("lotes")
+}
+
+/// Durable monthly sequence used only to generate human-readable base codes.
+model SecuenciaCodigoBase {
+  periodo       String @id
+  ultimoNumero  Int    @map("ultimo_numero")
+
+  @@map("secuencias_codigos_base")
+}
+
+/// A historical typification file is an append-only import descriptor, not a replacement for source records.
+model ArchivoTipificaciones {
+  id              String   @id @default(uuid()) @db.Uuid
+  importacionId   String   @unique @map("importacion_id")
+  baseId          String   @map("base_id") @db.Uuid
+  nombreArchivo   String   @map("nombre_archivo")
+  importadoEn     DateTime @default(now()) @map("importado_en")
+  resumen         Json
+  base            Base     @relation(fields: [baseId], references: [id], onDelete: Restrict)
+
+  @@index([baseId, importadoEn])
+  @@map("archivos_tipificaciones")
+}
+
+/// Future recycling executions must reference exactly one manually selected original base.
+model EjecucionReciclaje {
+  id              String   @id @default(uuid()) @db.Uuid
+  baseOriginalId  String   @map("base_original_id") @db.Uuid
+  estado          String   @default("PREPARADA")
+  metadatos       Json
+  creadoEn        DateTime @default(now()) @map("creado_en")
+  baseOriginal    Base     @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
+
+  @@index([baseOriginalId, creadoEn])
+  @@map("ejecuciones_reciclaje")
 }
 
 model LoteRegistro {

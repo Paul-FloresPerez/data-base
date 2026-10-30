@@ -49,6 +49,9 @@ export interface StoredMetadata {
   realHlrQueue?: StoredRealHlrQueuePlan | null;
   realHlrConsultationsByMobile?: Record<string, HlrConsultationMetadata>;
   historicalResultImport?: HistoricalResultImportSummary | null;
+  historicalResultImports?: HistoricalResultImportSummary[];
+  receivedAt?: string | null;
+  originalBaseId?: string | null;
 }
 
 export interface SaveStartPayload {
@@ -59,6 +62,8 @@ export interface SaveStartPayload {
   validRecords: number;
   excludedRecords: number;
   state: "LISTA_PARA_LIMPIAR" | "LISTA_PARA_ENRIQUECER" | "LISTA_PARA_DISTRIBUIR";
+  receivedAt: string | null;
+  originalBaseId: string | null;
   metadata: StoredMetadata;
 }
 
@@ -132,6 +137,8 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
       validRecords,
       excludedRecords,
       state,
+      receivedAt: batch.receivedAt,
+      originalBaseId: batch.originalBaseId,
       metadata: {
         version: 1,
         completed: false,
@@ -158,6 +165,9 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         realHlrQueue: batch.realHlrQueue,
         realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
         historicalResultImport: batch.historicalResultImport,
+        historicalResultImports: batch.historicalResultImports,
+        receivedAt: batch.receivedAt,
+        originalBaseId: batch.originalBaseId,
       },
     },
     records,
@@ -188,7 +198,7 @@ export function buildStoredLots(batch: WorkingBatch): SavedLot[] {
 }
 
 export interface LoadedRecord extends StoredRecord { id: string }
-export interface LoadedBase { id: string; name: string; createdAt: string; metadata: StoredMetadata; records: LoadedRecord[] }
+export interface LoadedBase { id: string; code?: string; name: string; originalFileName?: string; receivedAt?: string | null; originalBaseId?: string | null; createdAt: string; metadata: StoredMetadata; records: LoadedRecord[] }
 
 export function restoreBatch(base: LoadedBase): WorkingBatch {
   const records = [...base.records].sort((a, b) => a.sourceRow - b.sourceRow);
@@ -213,11 +223,14 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     kind: base.metadata.kind ?? "ORIGINAL",
     fileName: base.metadata.originalFileName,
     displayName: base.name,
+    receivedAt: base.receivedAt ?? base.metadata.receivedAt ?? null,
+    originalBaseId: base.originalBaseId ?? base.metadata.originalBaseId ?? null,
     createdAt: base.createdAt,
     dataset,
     cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,
     enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: operationalRecords.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
-    historicalResultImport: base.metadata.historicalResultImport ?? null,
+    historicalResultImport: base.metadata.historicalResultImport ?? base.metadata.historicalResultImports?.at(-1) ?? null,
+    historicalResultImports: base.metadata.historicalResultImports ?? (base.metadata.historicalResultImport ? [base.metadata.historicalResultImport] : []),
     exportCompletedAt: base.metadata.exportCompletedAt ?? null,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     realHlrQueue: base.metadata.realHlrQueue ?? null,

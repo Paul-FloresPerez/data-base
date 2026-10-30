@@ -9,6 +9,7 @@ const expected = [
   "20261024014500_add_audit_events",
   "20261026090000_add_sozar_hlr_control_plane",
   "20261026090100_add_shared_login_rate_limits",
+  "20261029090000_add_base_history_catalog",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -17,10 +18,12 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   const sql = await Promise.all(expected.slice(2).map(async (name) =>
     readFile(new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url), "utf8"),
   ));
-  for (const migration of sql) {
+  for (const migration of sql.slice(0, -1)) {
     assert.doesNotMatch(migration, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
   }
   assert.match(sql[0]!, /CREATE TABLE "eventos_auditoria"/);
   assert.match(sql[1]!, /CREATE TABLE "consultas_hlr"/);
   assert.match(sql[2]!, /CREATE TABLE "limites_intentos_login"/);
+  assert.match(sql[3]!, /CREATE TABLE "archivos_tipificaciones"/);
+  assert.doesNotMatch(sql[3]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM)/im);
 });

@@ -385,6 +385,7 @@ export function ExcelWorkspace() {
             exportCompletedAt: null,
             realHlrQueue: null,
             historicalResultImport: null,
+            historicalResultImports: [],
           }
         : currentBatch);
       setIsOverwriteConfirmationOpen(false);
@@ -471,6 +472,7 @@ export function ExcelWorkspace() {
         ...current,
         enrichmentOutput: merged.output,
         historicalResultImport: merged.summary,
+        historicalResultImports: [...current.historicalResultImports, merged.summary],
         provenanceBySourceRow: {
           ...current.provenanceBySourceRow,
           ...Object.fromEntries(merged.appliedSourceRows.map((sourceRow) => [sourceRow, "EXCEL"] as const)),

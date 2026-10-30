@@ -16,6 +16,8 @@ const historicalFieldHeaders = {
 } as const;
 
 export interface HistoricalResultImportSummary {
+  /** Local immutable operation id; identifies this file without storing contacts. */
+  importId?: string;
   sourceFileName: string;
   sourceColumns: string[];
   matched: number;
@@ -47,6 +49,11 @@ interface HistoricalResultRow {
 
 function asText(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
+}
+
+function createImportId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `historico-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function rowsFromWorkbook(workbook: WorkBook, xlsx: typeof import("xlsx")) {
@@ -212,6 +219,7 @@ export function mergeHistoricalResults(input: {
     output,
     appliedSourceRows,
     summary: {
+      importId: createImportId(),
       sourceFileName: input.sourceFileName,
       sourceColumns: headers,
       matched,
