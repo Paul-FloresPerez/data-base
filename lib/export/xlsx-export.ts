@@ -31,6 +31,8 @@ export interface ExportPlan {
 export interface ExportArchiveContext {
   baseId: string;
   baseName: string;
+  /** Human-readable root code when the active base is derived. */
+  baseOriginalCode?: string;
   filters: unknown;
   generatedAt: string;
 }
@@ -126,6 +128,25 @@ export function buildExportPlan(
   };
 }
 
+/** Rebinds planned source rows to a projection with the same source-row IDs. */
+export function projectExportPlan(plan: ExportPlan, output: EnrichmentOutput): ExportPlan {
+  const rowsBySourceRow = new Map(output.rows.map((row) => [row.sourceRow, row]));
+  return {
+    ...plan,
+    campaigns: plan.campaigns.map((campaign) => ({
+      ...campaign,
+      batches: campaign.batches.map((batch) => ({
+        ...batch,
+        rows: batch.rows.map((row) => {
+          const projected = rowsBySourceRow.get(row.sourceRow);
+          if (!projected) throw new Error("Un lote contiene una fila que no pertenece a la salida de exportación.");
+          return projected;
+        }),
+      })),
+    })),
+  };
+}
+
 function createTextWorksheet(
   xlsx: typeof import("xlsx"),
   columns: readonly string[],
@@ -203,6 +224,7 @@ export async function createCampaignZip(
   plan: ExportPlan,
   context: ExportArchiveContext,
   onProgress?: (completedBatches: number, totalBatches: number) => void,
+  campaignOutput: EnrichmentOutput = output,
 ): Promise<Blob> {
   const totalBatches = plan.campaigns.reduce((total, campaign) => total + campaign.batches.length, 0);
   let completedBatches = 0;
@@ -217,7 +239,7 @@ export async function createCampaignZip(
     }
 
     for (const batch of campaign.batches) {
-      const workbook = createXlsxWorkbook(xlsx, output.columns, batch.rows, campaign.folderName);
+      const workbook = createXlsxWorkbook(xlsx, campaignOutput.columns, batch.rows, campaign.folderName);
       folder.file(batch.fileName, workbookToArray(xlsx, workbook));
       completedBatches += 1;
       onProgress?.(completedBatches, totalBatches);
@@ -256,21 +278,20 @@ export function createManifestWorkbook(
   context: ExportArchiveContext,
 ): WorkBook {
   const workbook = xlsx.utils.book_new();
-  const summaryRows: EnrichmentOutputRow[] = [
-    ["Base", context.baseName],
-    ["Identificador de base", context.baseId],
+  const lotRows: EnrichmentOutputRow[] = plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => ({
+    sourceRow: batch.index,
+    cells: [context.baseOriginalCode ?? context.baseId, context.baseName, context.generatedAt, campaign.folderName, String(batch.index), batch.fileName, String(batch.rows.length), "GENERADO"],
+  })));
+  const indicatorRows: EnrichmentOutputRow[] = [
+    ["Código de base original", context.baseOriginalCode ?? context.baseId],
+    ["Base activa", context.baseName],
     ["Generado", context.generatedAt],
-    ["Filtros", JSON.stringify(context.filters)],
     ["Móviles únicos", String(plan.uniqueEligibleCount)],
     ["Asignaciones por campaña", String(plan.totalEligible)],
     ["Conflictos entre campañas", String(plan.conflictCount)],
-    ["Destinatario", "No informado"],
+    ["Filtros", JSON.stringify(context.filters)],
   ].map(([field, value], index) => ({ sourceRow: index + 1, cells: [field, value] }));
-  const lotRows: EnrichmentOutputRow[] = plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => ({
-    sourceRow: batch.index,
-    cells: [campaign.folderName, batch.fileName, String(batch.index), String(batch.rows.length)],
-  })));
-  xlsx.utils.book_append_sheet(workbook, createTextWorksheet(xlsx, ["Campo", "Valor"], summaryRows), "Resumen");
-  xlsx.utils.book_append_sheet(workbook, createTextWorksheet(xlsx, ["Campaña", "Archivo", "Lote", "Registros"], lotRows), "Lotes");
+  xlsx.utils.book_append_sheet(workbook, createTextWorksheet(xlsx, ["Código de base original", "Nombre", "Fecha", "Campaña", "Lote", "Archivo", "Cantidad de registros", "Estado"], lotRows), "Lotes");
+  xlsx.utils.book_append_sheet(workbook, createTextWorksheet(xlsx, ["Indicador", "Valor"], indicatorRows), "Indicadores");
   return workbook;
 }

@@ -213,6 +213,7 @@ export async function confirmIntelligentRecycling(executionId: string, userId: s
       originalFileName: `RECICLADA_${original.nombreOriginal}`,
       kind: "RECICLADA",
       originalBaseId: original.id,
+      originalBaseCode: original.codigo,
       recyclingExecutionId: execution.id,
       operationalSourceRows: records.map((record) => record.numeroFilaOriginal),
       exportCompletedAt: null,

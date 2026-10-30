@@ -9,8 +9,10 @@ import {
   createCompleteWorkbook,
   createSingleCampaignZip,
   createXlsxWorkbook,
+  projectExportPlan,
   workbookToArray,
 } from "@/lib/export/xlsx-export";
+import { assertCrmRecyclingContract, buildCrmRecyclingOutput } from "@/lib/export/crm-recycling-export";
 import type { EnrichmentOutput } from "@/lib/excel/types";
 import type { BatchSummary, DistributionSettings, RecordProvenance } from "@/lib/workspace/batch";
 
@@ -53,20 +55,22 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     message: "Los archivos se generan y descargan únicamente desde este navegador.",
     tone: "idle",
   });
-  const plan = useMemo(
-    () => buildExportPlan(report, settings.selectedCampaigns, settings.batchSize),
-    [report, settings.batchSize, settings.selectedCampaigns],
-  );
+  const campaignOutput = useMemo(() => batch.kind === "RECICLADA" ? buildCrmRecyclingOutput(output) : output, [batch.kind, output]);
+  const plan = useMemo(() => projectExportPlan(buildExportPlan(report, settings.selectedCampaigns, settings.batchSize), campaignOutput), [campaignOutput, report, settings.batchSize, settings.selectedCampaigns]);
+  const crmContractValid = useMemo(() => {
+    if (batch.kind !== "RECICLADA") return true;
+    try { assertCrmRecyclingContract(campaignOutput); return true; } catch { return false; }
+  }, [batch.kind, campaignOutput]);
   const isOutputConsistent =
     output.columns.length > 0 &&
     output.rows.length > 0 &&
-    output.rows.every((row) => row.cells.length === output.columns.length);
+    output.rows.every((row) => row.cells.length === output.columns.length) && crmContractValid;
   const canExportCampaigns = isOutputConsistent && settings.selectedCampaigns.length > 0 && plan.totalEligible > 0;
   const totalBatches = plan.campaigns.reduce((total, campaign) => total + campaign.batches.length, 0);
 
   function recordExport(type: string, quantity: number, campaign: "YOIGO" | "VODAFONE" | null, lotNumber: number | null) {
     const operationId = crypto.randomUUID();
-    const payload = { operationId, baseId: batch.id, campaign, lotId: null, lotNumber, type, quantity, filters, metadata: { baseKind: batch.kind, baseVersion: batch.createdAt } };
+    const payload = { operationId, baseId: batch.id, campaign, lotId: null, lotNumber, type, quantity, filters, metadata: { baseKind: batch.kind, baseVersion: batch.createdAt, format: batch.kind === "RECICLADA" ? "CRM_24" : "BASE_ORIGINAL" } };
     void fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "GENERADO" }) })
       .then((response) => response.ok ? fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "DESCARGA_INICIADA" }) }) : null)
       .catch(() => undefined);
@@ -112,11 +116,12 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
       const zipBlob = await createCampaignZip(xlsx, zip, masterOutput, plan, {
         baseId: batch.id,
         baseName: batch.displayName ?? batch.fileName,
+        baseOriginalCode: batch.originalBaseCode ?? (batch.kind === "ORIGINAL" ? batch.code : null) ?? batch.originalBaseId ?? batch.id,
         filters,
         generatedAt: new Date().toISOString(),
       }, (completed, total) => {
         setStatus({ message: "Generando ZIP local…", progress: `${completed} de ${total} lotes`, tone: "progress" });
-      });
+      }, campaignOutput);
       triggerDownload(zipBlob, "CAMPANAS_YOIGO_VODAFONE.zip");
       recordExport("ZIP_CAMPANAS", plan.totalEligible, null, null);
       onExportCompleted();
@@ -135,9 +140,10 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `0 de ${campaign.batches.length} lotes`, tone: "progress" });
     try {
       const [xlsx, jszip] = await Promise.all([import("xlsx"), import("jszip")]);
-      const zipBlob = await createSingleCampaignZip(xlsx, new jszip.default(), output, campaign, {
+      const zipBlob = await createSingleCampaignZip(xlsx, new jszip.default(), campaignOutput, campaign, {
         baseId: batch.id,
         baseName: batch.displayName ?? batch.fileName,
+        baseOriginalCode: batch.originalBaseCode ?? (batch.kind === "ORIGINAL" ? batch.code : null) ?? batch.originalBaseId ?? batch.id,
         filters,
         generatedAt: new Date().toISOString(),
       }, (completed, total) => setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `${completed} de ${total} lotes`, tone: "progress" }));
@@ -164,7 +170,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     try {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       const xlsx = await import("xlsx");
-      const workbook = createXlsxWorkbook(xlsx, output.columns, batch.rows, campaign.folderName);
+      const workbook = createXlsxWorkbook(xlsx, campaignOutput.columns, batch.rows, campaign.folderName);
       const bytes = workbookToArray(xlsx, workbook);
       triggerDownload(
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
@@ -184,7 +190,7 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Salida local</p>
           <h2 id="exportacion-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">Exporta la base</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Los archivos conservan los encabezados, el orden original y la procedencia de los registros.</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{batch.kind === "RECICLADA" ? "Los lotes CRM usan el contrato fijo de 24 encabezados; la base maestra mantiene su estructura interna original." : "Los archivos conservan los encabezados, el orden original y la procedencia de los registros."}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onBack} className="inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Ajustar distribución</button>
@@ -194,23 +200,24 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
 
       <section className="border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"><p><span className="font-semibold text-slate-900">Base:</span> {batch.displayName ?? batch.fileName} · {batch.kind} · <span className="font-mono text-xs">{batch.id.slice(0, 8)}</span></p><p className="mt-1 text-xs">{plan.campaigns.map((campaign) => `${campaign.campaign.toUpperCase()}: ${campaign.eligibleCount} registros / ${campaign.batches.length} lotes`).join(" · ") || "Sin campañas seleccionadas"} · Filtros aplicados en Campañas.</p></section>
 
-      {!isOutputConsistent ? <div role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">La salida enriquecida no está disponible o es inconsistente. Completa los pasos anteriores antes de exportar.</div> : null}
+      {!isOutputConsistent ? <div role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">{batch.kind === "RECICLADA" ? "La estructura CRM de 24 columnas no pudo validarse. No se generará ningún lote." : "La salida enriquecida no está disponible o es inconsistente. Completa los pasos anteriores antes de exportar."}</div> : null}
 
       <section className="overflow-hidden border border-slate-200 bg-white">
         <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div><p className="text-sm font-semibold text-slate-900">Base maestra</p><p className="mt-1 text-sm text-slate-600">{masterOutput.rows.length} registros originales, incluidos los excluidos, con todas sus columnas y enriquecimiento disponible. No es una lista de campaña.</p></div>
+          <div><p className="text-sm font-semibold text-slate-900">Base maestra</p><p className="mt-1 text-sm text-slate-600">{masterOutput.rows.length} registros originales, incluidos los excluidos, con todas sus columnas y enriquecimiento disponible. No es una lista de campaña{batch.kind === "RECICLADA" ? " ni una plantilla CRM" : ""}.</p></div>
           <button type="button" disabled={!isOutputConsistent || status.tone === "progress"} onClick={() => void downloadCompleteBase()} className="inline-flex min-h-10 items-center justify-center rounded-md border border-[#174ea6] bg-white px-3.5 text-sm font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">Descargar BASE_MAESTRA.xlsx</button>
         </div>
       </section>
 
       <section className="overflow-hidden border border-slate-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><p className="text-sm font-semibold text-slate-900">Exportación por campañas</p><p className="mt-1 text-sm leading-6 text-slate-600">Un ZIP incluye BASE_MAESTRA.xlsx, MANIFIESTO.xlsx y carpetas YOIGO/VODAFONE con lotes de hasta {settings.batchSize} registros.</p></div>
+          <div><p className="text-sm font-semibold text-slate-900">Exportación por campañas</p><p className="mt-1 text-sm leading-6 text-slate-600">Un ZIP incluye BASE_MAESTRA.xlsx, MANIFIESTO.xlsx y carpetas YOIGO/VODAFONE con lotes de hasta {settings.batchSize} registros{batch.kind === "RECICLADA" ? " en formato CRM de 24 columnas" : ""}.</p></div>
           <button type="button" disabled={!canExportCampaigns || status.tone === "progress"} onClick={() => void downloadZip()} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Descargar ZIP de campañas</button>
         </div>
-        <div className="grid divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <div className="grid divide-y divide-slate-200 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Móviles únicos</p><p className="mt-1 text-xl font-semibold tabular-nums text-[#174ea6]">{plan.uniqueEligibleCount}</p></div>
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Asignaciones</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{plan.totalEligible}</p></div>
+          <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Conflictos</p><p className="mt-1 text-xl font-semibold tabular-nums text-amber-700">{plan.conflictCount}</p></div>
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Lotes</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{totalBatches}</p></div>
         </div>
         {plan.conflictCount > 0 ? <p role="status" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{plan.conflictCount} móviles son elegibles en más de una campaña. No hay una regla de exclusividad comercial configurada: el ZIP conserva ambas candidaturas para decisión humana, sin duplicarlos dentro de cada campaña.</p> : null}

@@ -17,6 +17,10 @@ export interface DistributionSettings {
 export type RecordProvenance = "EXCEL" | "CRM" | "MOCK" | "API_REAL";
 
 export interface WorkingBatch {
+  /** Human-readable code emitted by the server for a saved base. */
+  code?: string;
+  /** Root original-base code when this is a recycled derivative. */
+  originalBaseCode?: string | null;
   campaignFilters: CampaignFilters;
   cleaning: CleaningResult | null;
   createdAt: string;
@@ -50,6 +54,9 @@ export interface WorkingBatch {
 }
 
 export interface BatchSummary {
+  code?: string;
+  originalBaseCode?: string | null;
+  originalBaseId: string | null;
   createdAt: string;
   displayName?: string;
   fileName: string;
@@ -87,6 +94,8 @@ export function createWorkingBatch(
 ): WorkingBatch {
   return {
     id,
+    code: undefined,
+    originalBaseCode: null,
     kind: "ORIGINAL",
     fileName: dataset.fileName,
     displayName: dataset.fileName.replace(/\.xlsx$/i, ""),
@@ -124,6 +133,9 @@ export function getBatchStatus(batch: WorkingBatch): BatchStatus {
 export function summarizeBatch(batch: WorkingBatch): BatchSummary {
   return {
     id: batch.id,
+    code: batch.code,
+    originalBaseCode: batch.originalBaseCode,
+    originalBaseId: batch.originalBaseId,
     fileName: batch.fileName,
     displayName: batch.displayName,
     createdAt: batch.createdAt,

@@ -52,6 +52,7 @@ export interface StoredMetadata {
   historicalResultImports?: HistoricalResultImportSummary[];
   receivedAt?: string | null;
   originalBaseId?: string | null;
+  originalBaseCode?: string | null;
   recyclingExecutionId?: string | null;
 }
 
@@ -169,6 +170,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         historicalResultImports: batch.historicalResultImports,
         receivedAt: batch.receivedAt,
         originalBaseId: batch.originalBaseId,
+        originalBaseCode: batch.originalBaseCode,
         recyclingExecutionId: batch.recyclingExecutionId,
       },
     },
@@ -222,6 +224,8 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
   const filters = { ...base.metadata.campaignFilters, asOfDate: base.metadata.campaignFilters.asOfDate ? new Date(base.metadata.campaignFilters.asOfDate) : undefined };
   return {
     id: base.id,
+    code: base.code,
+    originalBaseCode: base.metadata.originalBaseCode ?? (base.originalBaseId ? null : base.code ?? null),
     kind: base.metadata.kind ?? "ORIGINAL",
     fileName: base.metadata.originalFileName,
     displayName: base.name,

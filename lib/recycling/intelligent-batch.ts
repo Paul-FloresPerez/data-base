@@ -20,6 +20,7 @@ export function recyclingBatchFromOriginal(input: {
   };
   const batch = createWorkingBatch(dataset);
   batch.kind = "RECICLADA";
+  batch.originalBaseCode = input.original.code ?? input.original.originalBaseCode ?? null;
   batch.originalBaseId = input.originalBaseId;
   batch.recyclingExecutionId = input.executionId;
   batch.displayName = `Reciclada · ${input.original.displayName ?? input.original.fileName}`;

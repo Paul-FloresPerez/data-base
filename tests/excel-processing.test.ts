@@ -636,9 +636,10 @@ test("genera ZIP con carpetas y archivos de lote esperados", async () => {
   const master = XLSX.read(await reopened.file("BASE_MAESTRA.xlsx")!.async("arraybuffer"), { type: "array" });
   assert.equal(XLSX.utils.sheet_to_json<string[]>(master.Sheets[master.SheetNames[0]!], { header: 1, raw: false }).length, output.rows.length + 1);
   const manifest = XLSX.read(await reopened.file("MANIFIESTO.xlsx")!.async("arraybuffer"), { type: "array" });
-  const manifestRows = XLSX.utils.sheet_to_json<string[]>(manifest.Sheets.Resumen!, { header: 1, raw: false });
-  assert.ok(manifestRows.some((row) => row[0] === "Identificador de base" && row[1] === "base-prueba"));
-  assert.ok(manifestRows.some((row) => row[0] === "Destinatario" && row[1] === "No informado"));
+  const manifestRows = XLSX.utils.sheet_to_json<string[]>(manifest.Sheets.Lotes!, { header: 1, raw: false });
+  assert.deepEqual(manifestRows[0], ["Código de base original", "Nombre", "Fecha", "Campaña", "Lote", "Archivo", "Cantidad de registros", "Estado"]);
+  assert.ok(manifestRows.slice(1).every((row) => row[0] === "base-prueba" && row[7] === "GENERADO"));
+  assert.ok(manifest.Sheets.Indicadores);
   const yoigoLot = XLSX.read(await reopened.file("YOIGO/LOTE_001.xlsx")!.async("arraybuffer"), { type: "array" });
   const yoigoRows = XLSX.utils.sheet_to_json<string[]>(yoigoLot.Sheets.YOIGO!, { header: 1, raw: false });
   assert.deepEqual(yoigoRows.slice(1).map((row) => row[0]), output.rows.slice(0, 100).map((row) => row.cells[0]));

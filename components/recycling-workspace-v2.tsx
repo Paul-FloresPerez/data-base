@@ -47,6 +47,41 @@ function importMessage(progress: ImportProgress, issues: SourceIssue[], cancelle
   return `${cancelled ? "Importación cancelada. Resultado parcial" : "Importación terminada"}: ${progress.valid} Excel válidos, ${progress.failed} fallidos${duplicateText}.${issues.length ? " Revisa las incidencias antes de consolidar." : ""}`;
 }
 
+async function downloadRecyclingReport(execution: RecyclingResult): Promise<void> {
+  const xlsx = await import("xlsx");
+  const workbook = xlsx.utils.book_new();
+  const indicators = [
+    ["Indicador", "Valor"],
+    ["Ejecución", execution.id],
+    ["Fecha efectiva", execution.effectiveDate],
+    ["Usuario", execution.user],
+    ["Archivos CRM", execution.files.join(", ")],
+    ["Elegibles", String(execution.summary?.ELEGIBLE ?? 0)],
+    ["Ventas bloqueadas", String(execution.summary?.BLOQUEADO_VENTA ?? 0)],
+    ["Conflictos", String(execution.summary?.REVISION_CONFLICTO ?? 0)],
+    ["Permanencia", String(execution.summary?.REVISION_PERMANENCIA ?? 0)],
+    ["Incidencias externas", String(execution.incidentsOutsideBase)],
+  ];
+  const grouped = new Map<string, number>();
+  for (const result of execution.results) {
+    const key = `${result.decision}\u0000${result.reason}`;
+    grouped.set(key, (grouped.get(key) ?? 0) + 1);
+  }
+  const decisions = [["Estado", "Motivo", "Cantidad"], ...[...grouped.entries()].map(([key, count]) => {
+    const [decision, reason] = key.split("\u0000");
+    return [decision.replaceAll("_", " "), reason, String(count)];
+  })];
+  xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(indicators), "Indicadores");
+  xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet(decisions), "Decisiones");
+  const bytes = xlsx.write(workbook, { bookType: "xlsx", type: "array", compression: true }) as ArrayBuffer;
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `INFORME_RECICLAJE_${execution.id.slice(0, 8)}.xlsx`;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 function RecyclingHistory({ baseId }: { baseId: string }) {
   const [items, setItems] = useState<RecyclingHistoryItem[]>([]);
   const [detail, setDetail] = useState<RecyclingResult | null>(null);
@@ -60,7 +95,7 @@ function RecyclingHistory({ baseId }: { baseId: string }) {
     return () => { cancelled = true; };
   }, [baseId]);
   if (!baseId) return null;
-  return <section className="border border-slate-200 bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">Historial de reciclajes</p><p className="mt-1 text-xs text-slate-500">Cada ejecución es una instantánea: consultarla no la recalcula ni modifica.</p></div><span className="text-xs font-semibold text-slate-600">{items.length}</span></div>{message ? <p role="status" className="mt-3 text-xs text-rose-700">{message}</p> : null}{items.length ? <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">{items.map((item) => <div key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0 text-xs text-slate-600"><p className="font-semibold text-slate-900">{item.effectiveDate} · {item.user} · {item.status.replaceAll("_", " ")}</p><p className="mt-1 truncate">{item.files.length} archivo{item.files.length === 1 ? "" : "s"} CRM · Elegibles {item.summary?.ELEGIBLE ?? 0} · Bloqueados {item.summary?.BLOQUEADO_VENTA ?? 0} · Revisión {(item.summary?.REVISION_GESTION ?? 0) + (item.summary?.REVISION_CONFLICTO ?? 0) + (item.summary?.REVISION_PERMANENCIA ?? 0) + (item.summary?.FUERA_RANGO_HISTORICO ?? 0)}</p></div><button type="button" onClick={() => void api<RecyclingResult>(`/api/reciclaje/${item.id}`).then(setDetail).catch(() => setMessage("No se pudo abrir la ejecución."))} className="shrink-0 text-xs font-semibold text-[#174ea6]">Ver decisiones</button></div>)}</div> : <p className="mt-3 text-xs text-slate-500">Aún no hay ejecuciones para esta base original.</p>}{detail ? <div className="mt-4 border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-slate-900">Ejecución {detail.effectiveDate} · {detail.user}</p><button type="button" onClick={() => setDetail(null)} className="font-semibold text-[#174ea6]">Cerrar</button></div><p className="mt-2">Archivos: {detail.files.join(", ") || "Sin archivo"}. Elegibles {detail.summary?.ELEGIBLE ?? 0}; ventas bloqueadas {detail.summary?.BLOQUEADO_VENTA ?? 0}; incidencias externas {detail.incidentsOutsideBase}.</p><details className="mt-3"><summary className="cursor-pointer font-semibold">Motivos conservados ({detail.results.length})</summary><ul className="mt-2 max-h-36 space-y-1 overflow-auto">{detail.results.map((result) => <li key={result.originalRecordId}>{result.decision.replaceAll("_", " ")}: {result.reason}</li>)}</ul></details></div> : null}</section>;
+  return <section className="border border-slate-200 bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">Historial de reciclajes</p><p className="mt-1 text-xs text-slate-500">Cada ejecución es una instantánea: consultarla no la recalcula ni modifica.</p></div><span className="text-xs font-semibold text-slate-600">{items.length}</span></div>{message ? <p role="status" className="mt-3 text-xs text-rose-700">{message}</p> : null}{items.length ? <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">{items.map((item) => <div key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0 text-xs text-slate-600"><p className="font-semibold text-slate-900">{item.effectiveDate} · {item.user} · {item.status.replaceAll("_", " ")}</p><p className="mt-1 truncate">{item.files.length} archivo{item.files.length === 1 ? "" : "s"} CRM · Elegibles {item.summary?.ELEGIBLE ?? 0} · Bloqueados {item.summary?.BLOQUEADO_VENTA ?? 0} · Revisión {(item.summary?.REVISION_GESTION ?? 0) + (item.summary?.REVISION_CONFLICTO ?? 0) + (item.summary?.REVISION_PERMANENCIA ?? 0) + (item.summary?.FUERA_RANGO_HISTORICO ?? 0)}</p></div><button type="button" onClick={() => void api<RecyclingResult>(`/api/reciclaje/${item.id}`).then(setDetail).catch(() => setMessage("No se pudo abrir la ejecución."))} className="shrink-0 text-xs font-semibold text-[#174ea6]">Ver decisiones</button></div>)}</div> : <p className="mt-3 text-xs text-slate-500">Aún no hay ejecuciones para esta base original.</p>}{detail ? <div className="mt-4 border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-slate-900">Ejecución {detail.effectiveDate} · {detail.user}</p><div className="flex gap-3"><button type="button" onClick={() => void downloadRecyclingReport(detail).catch(() => setMessage("No se pudo generar el informe."))} className="font-semibold text-[#174ea6]">Descargar informe</button><button type="button" onClick={() => setDetail(null)} className="font-semibold text-[#174ea6]">Cerrar</button></div></div><p className="mt-2">Archivos: {detail.files.join(", ") || "Sin archivo"}. Elegibles {detail.summary?.ELEGIBLE ?? 0}; ventas bloqueadas {detail.summary?.BLOQUEADO_VENTA ?? 0}; incidencias externas {detail.incidentsOutsideBase}.</p><details className="mt-3"><summary className="cursor-pointer font-semibold">Motivos conservados ({detail.results.length})</summary><ul className="mt-2 max-h-36 space-y-1 overflow-auto">{detail.results.map((result) => <li key={result.originalRecordId}>{result.decision.replaceAll("_", " ")}: {result.reason}</li>)}</ul></details></div> : null}</section>;
 }
 
 export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBaseId = "" }: { onCreate: (batch: WorkingBatch) => void; onContinue: () => void; initialOriginalBaseId?: string }) {
