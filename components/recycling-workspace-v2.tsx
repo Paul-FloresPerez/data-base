@@ -228,7 +228,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue }: { onCreate: (batc
         if (started.status === "EVALUADA" || started.status === "BASE_GENERADA") return api<RecyclingResult>(`/api/reciclaje/${started.id}`);
         const rows = analysis.records.map((record) => {
           const key = `${record.zipName ?? ""}|${record.internalPath ?? ""}|${record.fileName}`;
-          return { importId: plan.fileIds.get(key), sourceRow: record.originRow, mobile: record.mobile, managedAt: record.date || null, tipification: record.tipification || null, confirmedSale: record.confirmedSale, saleEvidence: record.saleEvidence ?? null, fileName: record.fileName, sheetName: record.sheetName, zipName: record.zipName ?? null, internalPath: record.internalPath ?? null };
+          return { importId: plan.fileIds.get(key), sourceRow: record.originRow, mobile: record.mobile, managedAt: record.date || null, tipification: record.tipification || null, confirmedSale: record.confirmedSale, saleAmbiguous: record.saleAmbiguous, saleEvidence: record.saleEvidence ?? null, fileName: record.fileName, sheetName: record.sheetName, zipName: record.zipName ?? null, internalPath: record.internalPath ?? null };
         });
         for (let index = 0; index < rows.length; index += 100) await api(`/api/reciclaje/${started.id}/gestiones`, { method: "POST", body: JSON.stringify({ rows: rows.slice(index, index + 100) }) });
         return api<RecyclingResult>(`/api/reciclaje/${started.id}/finalizar`, { method: "POST" });

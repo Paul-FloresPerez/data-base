@@ -17,6 +17,7 @@ export interface RecyclingManagement {
   managedAt: string | null;
   tipificationOriginal: string | null;
   confirmedSale: boolean;
+  saleAmbiguous?: boolean;
   saleEvidence: string | null;
 }
 
@@ -112,9 +113,12 @@ export function evaluateIntelligentRecycling(
     if (sale) {
       decision = { originalRecordId: original.id, decision: "BLOQUEADO_VENTA", reason: sale.saleEvidence || "Venta confirmada en historial CRM", winningManagementId: sale.id };
     } else {
+      const ambiguousSale = events.find((event) => event.saleAmbiguous);
       const winner = newestManagement(events);
       const portability = original.portabilityDate ? day(original.portabilityDate) : null;
-      if (!winner.event) {
+      if (ambiguousSale) {
+        decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Dato de venta ambiguo; requiere revisión humana", winningManagementId: ambiguousSale.id };
+      } else if (!winner.event) {
         decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Sin gestión CRM con fecha válida", winningManagementId: null };
       } else if (winner.conflict) {
         decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Tipificaciones contradictorias en la misma fecha", winningManagementId: winner.event.id };

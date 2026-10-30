@@ -14,6 +14,7 @@ export type ManagementInput = {
   managedAt: string | null;
   tipification: string | null;
   confirmedSale: boolean;
+  saleAmbiguous: boolean;
   saleEvidence: string | null;
   fileName: string;
   sheetName: string;
@@ -96,7 +97,7 @@ export async function appendRecyclingManagements(executionId: string, rows: Mana
       tipificacionNormalizada: safeText(normalizeRecyclingTipification(row.tipification), 300),
       ventaConfirmada: row.confirmedSale,
       evidenciaVenta: safeText(row.saleEvidence, 500),
-      metadatos: { version: 1, fileName: safeText(row.fileName, 180), sheetName: safeText(row.sheetName, 120), zipName: safeText(row.zipName, 180), internalPath: safeText(row.internalPath, 500), managedAtOriginal: safeText(row.managedAt, 80) },
+      metadatos: { version: 1, fileName: safeText(row.fileName, 180), sheetName: safeText(row.sheetName, 120), zipName: safeText(row.zipName, 180), internalPath: safeText(row.internalPath, 500), managedAtOriginal: safeText(row.managedAt, 80), saleAmbiguous: row.saleAmbiguous },
     };
   });
   const created = await prisma.gestionTipificacion.createMany({ data, skipDuplicates: true });
@@ -112,7 +113,7 @@ export async function finalizeIntelligentRecycling(executionId: string) {
   try {
     const [records, managements] = await Promise.all([
       prisma.registro.findMany({ where: { baseId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaPortabilidad: true } }),
-      prisma.gestionTipificacion.findMany({ where: { baseOriginalId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaGestion: true, tipificacionOriginal: true, ventaConfirmada: true, evidenciaVenta: true } }),
+      prisma.gestionTipificacion.findMany({ where: { baseOriginalId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaGestion: true, tipificacionOriginal: true, ventaConfirmada: true, evidenciaVenta: true, metadatos: true } }),
     ]);
     const storedCriteria = (execution.metadatos as { criteria?: Partial<RecyclingCriteria> }).criteria;
     const criteria: RecyclingCriteria = {
@@ -123,7 +124,7 @@ export async function finalizeIntelligentRecycling(executionId: string) {
     };
     const evaluation = evaluateIntelligentRecycling(
       records.map((record) => ({ id: record.id, mobile: record.movilNormalizado, portabilityDate: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null })),
-      managements.map((management) => ({ id: management.id, mobile: management.movilNormalizado, managedAt: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificationOriginal: management.tipificacionOriginal, confirmedSale: management.ventaConfirmada, saleEvidence: management.evidenciaVenta })),
+      managements.map((management) => ({ id: management.id, mobile: management.movilNormalizado, managedAt: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificationOriginal: management.tipificacionOriginal, confirmedSale: management.ventaConfirmada, saleAmbiguous: Boolean((management.metadatos as { saleAmbiguous?: unknown }).saleAmbiguous), saleEvidence: management.evidenciaVenta })),
       criteria,
     );
     await prisma.$transaction(async (tx) => {

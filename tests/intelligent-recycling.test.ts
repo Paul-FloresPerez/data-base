@@ -12,6 +12,11 @@ test("una venta confirmada bloquea una tipificación reciclable contradictoria",
   assert.equal(result.decisions[0]?.decision, "BLOQUEADO_VENTA");
 });
 
+test("un dato de venta ambiguo no se distribuye automáticamente", () => {
+  const result = evaluateIntelligentRecycling([original("r1", "612345678", "2025-01-01")], [{ ...management("m1", "612345678", "2025-06-02", "NO CONTESTA"), saleAmbiguous: true }], criteria("2025-06-30"));
+  assert.equal(result.decisions[0]?.decision, "REVISION_CONFLICTO");
+});
+
 test("conserva la precedencia por fecha, incidencias ajenas y tipificaciones desconocidas", () => {
   const result = evaluateIntelligentRecycling([original("r1", "612345678", "2025-01-01"), original("r2", "712345678", "2025-01-01")], [management("old", "612345678", "2025-04-01", "OTRA"), management("new", "612345678", "2025-06-01", "  buzon de voz "), management("unknown", "712345678", "2025-06-01", "DESCONOCIDA"), management("outside", "622345678", "2025-06-01", "NO CONTESTA")], criteria("2025-07-01"));
   assert.equal(result.decisions[0]?.decision, "ELEGIBLE");

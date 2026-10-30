@@ -8,7 +8,7 @@ export const knownTipifications = [...candidateTipifications, ...followUpTipific
 
 export type RecyclingBucket = "candidato" | "seguimiento" | "revision" | "bloqueado";
 export interface RecyclingInput { fileName: string; zipName?: string; internalPath?: string; sheetName?: string; columns: string[]; rows: string[][] }
-export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; confirmedSale: boolean; saleEvidence?: string; bucket: RecyclingBucket; reviewReason?: string }
+export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; confirmedSale: boolean; saleAmbiguous: boolean; saleEvidence?: string; bucket: RecyclingBucket; reviewReason?: string }
 export interface RecyclingAnalysis { columns: string[]; records: RecyclingRecord[]; winners: RecyclingRecord[]; counts: Record<RecyclingBucket | "duplicados" | "moviles", number>; tipifications: Record<string, number>; files: string[] }
 
 const aliases: Record<string, string[]> = {
@@ -44,7 +44,7 @@ export function analyzeRecyclingFiles(inputs: RecyclingInput[]): RecyclingAnalys
       const ambiguousSale = ambiguousSaleIndex >= 0 && Boolean((cells[ambiguousSaleIndex] ?? "").trim()) && !confirmedSale;
       const blocked = (blockIndex >= 0 && isBlocked(cells[blockIndex] ?? "")) || confirmedSale;
       const aligned = [...union.keys()].map((header) => cells[input.columns.indexOf(header)] ?? "");
-      all.push({ mobile, sourceRow: internalRow++, originRow: index + 2, sheetName: input.sheetName ?? "Datos", cells: aligned, fileName: input.fileName, zipName: input.zipName, internalPath: input.internalPath, date: cells[dateIndex] ?? "", tipification, confirmedSale, saleEvidence: confirmedSale ? "Venta confirmada indicada por el archivo CRM" : undefined, bucket: bucket(tipification, blocked, known), reviewReason: blocked ? (confirmedSale ? "Venta confirmada indicada por el CRM" : "Bloqueo/oposición indicado por el CRM") : ambiguousSale ? "Dato de venta ambiguo; requiere revisión" : blockIndex < 0 ? "El CRM no aporta oposición, bloqueo ni exclusión comercial" : known ? undefined : "Tipificación desconocida" });
+      all.push({ mobile, sourceRow: internalRow++, originRow: index + 2, sheetName: input.sheetName ?? "Datos", cells: aligned, fileName: input.fileName, zipName: input.zipName, internalPath: input.internalPath, date: cells[dateIndex] ?? "", tipification, confirmedSale, saleAmbiguous: ambiguousSale, saleEvidence: confirmedSale ? "Venta confirmada indicada por el archivo CRM" : undefined, bucket: bucket(tipification, blocked, known), reviewReason: blocked ? (confirmedSale ? "Venta confirmada indicada por el CRM" : "Bloqueo/oposición indicado por el CRM") : ambiguousSale ? "Dato de venta ambiguo; requiere revisión" : blockIndex < 0 ? "El CRM no aporta oposición, bloqueo ni exclusión comercial" : known ? undefined : "Tipificación desconocida" });
     }
   }
   const winnersByMobile = new Map<string, RecyclingRecord>();
