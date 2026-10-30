@@ -22,6 +22,7 @@
     "db:verify-audit-branches": "node --conditions=react-server --experimental-strip-types scripts/verify-audit-branches.ts",
     "db:exercise-audit-transaction": "node --conditions=react-server --experimental-strip-types scripts/exercise-audit-transaction.ts",
     "db:exercise-sozar-first-real-concurrency": "node --conditions=react-server --experimental-strip-types scripts/exercise-sozar-first-real-concurrency.ts",
+    "db:exercise-intelligent-recycling-confirmation": "node --conditions=react-server --experimental-strip-types scripts/exercise-intelligent-recycling-confirmation.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

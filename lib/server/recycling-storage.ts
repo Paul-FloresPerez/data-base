@@ -4,6 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { normalizeSpanishMobile } from "@/lib/excel/cleaning";
 import { portabilityDateForStorage } from "@/lib/excel/portability-date";
 import { evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification, type RecyclingCriteria } from "@/lib/recycling/intelligent-recycling";
+import { nextBaseCode } from "@/lib/server/base-code";
 import { prisma } from "@/lib/server/prisma";
 
 type FileInput = { importId: string; name: string };
@@ -39,6 +40,7 @@ function safeText(value: string | null, limit: number): string | null {
 export async function beginIntelligentRecycling(input: {
   operationId: string;
   baseOriginalId: string;
+  userId: string;
   criteria: RecyclingCriteria;
   files: FileInput[];
 }) {
@@ -67,6 +69,7 @@ export async function beginIntelligentRecycling(input: {
       data: {
         operacionId: input.operationId,
         baseOriginalId: input.baseOriginalId,
+        usuarioId: input.userId,
         fechaEfectiva: effectiveDate,
         metadatos: { version: 1, criteria: input.criteria, files: input.files.map((file) => ({ importId: file.importId, name: file.name })) } as unknown as Prisma.InputJsonValue,
       },
@@ -139,17 +142,172 @@ export async function finalizeIntelligentRecycling(executionId: string) {
 }
 
 export async function getRecyclingExecution(executionId: string) {
-  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: executionId }, include: { resultados: { select: { registroOriginalId: true, estado: true, motivo: true } } } });
+  const execution = await prisma.ejecucionReciclaje.findUnique({
+    where: { id: executionId },
+    include: {
+      usuario: { select: { username: true } },
+      resultados: { select: { registroOriginalId: true, estado: true, motivo: true } },
+      gestiones: { select: { archivo: { select: { nombreArchivo: true } } } },
+    },
+  });
   if (!execution) throw new Error("Ejecución de reciclaje no encontrada.");
   const metadata = execution.metadatos as { summary?: Record<string, number>; incidentsOutsideBase?: number; criteria?: RecyclingCriteria };
-  return { id: execution.id, baseOriginalId: execution.baseOriginalId, status: execution.estado, criteria: metadata.criteria ?? null, summary: metadata.summary ?? null, incidentsOutsideBase: metadata.incidentsOutsideBase ?? 0, results: execution.resultados.map((result) => ({ originalRecordId: result.registroOriginalId, decision: result.estado, reason: result.motivo })) };
+  return {
+    id: execution.id,
+    baseOriginalId: execution.baseOriginalId,
+    recycledBaseId: execution.baseRecicladaId,
+    status: execution.estado,
+    createdAt: execution.creadoEn.toISOString(),
+    effectiveDate: execution.fechaEfectiva.toISOString().slice(0, 10),
+    user: execution.usuario?.username ?? "Histórico",
+    criteria: metadata.criteria ?? null,
+    summary: metadata.summary ?? null,
+    incidentsOutsideBase: metadata.incidentsOutsideBase ?? 0,
+    files: [...new Set(execution.gestiones.map((management) => management.archivo.nombreArchivo))],
+    results: execution.resultados.map((result) => ({ originalRecordId: result.registroOriginalId, decision: result.estado, reason: result.motivo })),
+  };
+}
+
+/**
+ * Atomically creates the derived base from an evaluated snapshot. No client
+ * records are accepted here: the source rows are copied directly from the
+ * selected original base, so a retry or a double click cannot mix sessions.
+ */
+export async function confirmIntelligentRecycling(executionId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    const execution = await tx.ejecucionReciclaje.findUnique({
+      where: { id: executionId },
+      include: {
+        baseOriginal: { include: { registros: { orderBy: { numeroFilaOriginal: "asc" } } } },
+        resultados: { where: { estado: "ELEGIBLE" }, select: { registroOriginalId: true } },
+      },
+    });
+    if (!execution) throw new Error("Ejecución de reciclaje no encontrada.");
+    if (execution.usuarioId && execution.usuarioId !== userId) throw new Error("La ejecución pertenece a otro usuario.");
+    if (execution.baseRecicladaId && execution.estado === "BASE_GENERADA") {
+      return { baseId: execution.baseRecicladaId, reused: true };
+    }
+
+    // EVALUANDO acts as the short-lived transaction claim. PostgreSQL makes a
+    // concurrent conditional update wait, then fail its predicate after the
+    // winning transaction commits, so at most one derived base can be made.
+    const claimed = await tx.ejecucionReciclaje.updateMany({
+      where: { id: executionId, estado: "EVALUADA", baseRecicladaId: null },
+      data: { estado: "EVALUANDO" },
+    });
+    if (claimed.count !== 1) {
+      const latest = await tx.ejecucionReciclaje.findUnique({ where: { id: executionId }, select: { estado: true, baseRecicladaId: true } });
+      if (latest?.estado === "BASE_GENERADA" && latest.baseRecicladaId) return { baseId: latest.baseRecicladaId, reused: true };
+      throw new Error("La ejecución no está lista para confirmarse.");
+    }
+
+    const original = execution.baseOriginal;
+    if (original.tipo !== "ORIGINAL" || !metadataCompleted(original.metadatos)) throw new Error("La base original no está disponible para reciclaje.");
+    const eligibleIds = new Set(execution.resultados.map((result) => result.registroOriginalId));
+    const records = original.registros.filter((record) => eligibleIds.has(record.id));
+    const originalMetadata = original.metadatos as Record<string, unknown>;
+    const recycledMetadata = {
+      ...originalMetadata,
+      completed: true,
+      revision: null,
+      originalFileName: `RECICLADA_${original.nombreOriginal}`,
+      kind: "RECICLADA",
+      originalBaseId: original.id,
+      recyclingExecutionId: execution.id,
+      operationalSourceRows: records.map((record) => record.numeroFilaOriginal),
+      exportCompletedAt: null,
+    } as Prisma.InputJsonValue;
+    const code = await nextBaseCode(tx, original.fechaRecepcion);
+    const recycled = await tx.base.create({
+      data: {
+        codigo: code,
+        nombreOriginal: `RECICLADA_${original.nombreOriginal}`,
+        nombreDescriptivo: `Reciclada · ${original.nombreDescriptivo}`.slice(0, 180),
+        fechaRecepcion: original.fechaRecepcion,
+        tipo: "RECICLADA",
+        baseOriginalId: original.id,
+        estado: originalMetadata.enrichmentColumns ? "LISTA_PARA_DISTRIBUIR" : "LISTA_PARA_ENRIQUECER",
+        cantidadImportados: records.length,
+        cantidadValidos: records.length,
+        cantidadExcluidos: 0,
+        metadatos: recycledMetadata,
+      },
+      select: { id: true },
+    });
+    if (records.length) {
+      await tx.registro.createMany({
+        data: records.map((record) => ({
+          baseId: recycled.id,
+          numeroFilaOriginal: record.numeroFilaOriginal,
+          movilNormalizado: record.movilNormalizado,
+          documento: record.documento,
+          nombre: record.nombre,
+          operadorActual: record.operadorActual,
+          operadorOriginal: record.operadorOriginal,
+          fechaPortabilidad: record.fechaPortabilidad,
+          tipificacion: record.tipificacion,
+          datosOriginales: record.datosOriginales === null ? Prisma.JsonNull : record.datosOriginales as Prisma.InputJsonValue,
+        })),
+      });
+    }
+    await tx.ejecucionReciclaje.update({ where: { id: executionId }, data: { baseRecicladaId: recycled.id, estado: "BASE_GENERADA" } });
+    await tx.eventoAuditoria.createMany({
+      data: [{
+        operacionId: `reciclaje:${execution.id}:base-generada`,
+        accion: "BASE_RECICLADA",
+        usuarioId: userId,
+        baseId: recycled.id,
+        cantidad: records.length,
+        metadatos: { executionId: execution.id, originalBaseId: original.id, eligible: records.length },
+      }],
+      skipDuplicates: true,
+    });
+    return { baseId: recycled.id, reused: false };
+  });
 }
 
 export async function linkGeneratedRecycledBase(tx: Prisma.TransactionClient, input: { executionId: string; baseId: string; baseOriginalId: string }) {
-  const linked = await tx.ejecucionReciclaje.updateMany({ where: { id: input.executionId, baseOriginalId: input.baseOriginalId, estado: "EVALUADA", baseRecicladaId: null }, data: { baseRecicladaId: input.baseId, estado: "BASE_GENERADA" } });
+  // A server-confirmed execution already owns this base. The normal autosave
+  // may later persist campaign settings for that same UUID; treat it as an
+  // idempotent continuation, never as a second recycling confirmation.
+  const linked = await tx.ejecucionReciclaje.updateMany({
+    where: {
+      id: input.executionId,
+      baseOriginalId: input.baseOriginalId,
+      OR: [
+        { estado: "EVALUADA", baseRecicladaId: null },
+        { estado: "BASE_GENERADA", baseRecicladaId: input.baseId },
+      ],
+    },
+    data: { baseRecicladaId: input.baseId, estado: "BASE_GENERADA" },
+  });
   if (linked.count !== 1) throw new Error("La ejecución no está disponible para generar una base reciclada.");
 }
 
 export async function listRecyclingHistory(baseOriginalId: string) {
-  return prisma.ejecucionReciclaje.findMany({ where: { baseOriginalId }, orderBy: { creadoEn: "desc" }, select: { id: true, fechaEfectiva: true, estado: true, creadoEn: true, baseRecicladaId: true, _count: { select: { resultados: true, gestiones: true } } } });
+  const executions = await prisma.ejecucionReciclaje.findMany({
+    where: { baseOriginalId },
+    orderBy: { creadoEn: "desc" },
+    include: {
+      usuario: { select: { username: true } },
+      resultados: { select: { estado: true } },
+      gestiones: { select: { archivo: { select: { nombreArchivo: true } } } },
+    },
+  });
+  return executions.map((execution) => {
+    const metadata = execution.metadatos as { criteria?: RecyclingCriteria; summary?: Record<string, number>; incidentsOutsideBase?: number };
+    const counts = execution.resultados.reduce<Record<string, number>>((result, row) => ({ ...result, [row.estado]: (result[row.estado] ?? 0) + 1 }), {});
+    return {
+      id: execution.id,
+      effectiveDate: execution.fechaEfectiva.toISOString().slice(0, 10),
+      createdAt: execution.creadoEn.toISOString(),
+      status: execution.estado,
+      user: execution.usuario?.username ?? "Histórico",
+      recycledBaseId: execution.baseRecicladaId,
+      criteria: metadata.criteria ?? null,
+      files: [...new Set(execution.gestiones.map((management) => management.archivo.nombreArchivo))],
+      summary: metadata.summary ?? counts,
+      incidentsOutsideBase: metadata.incidentsOutsideBase ?? 0,
+    };
+  });
 }

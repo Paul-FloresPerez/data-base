@@ -828,9 +828,9 @@ export function ExcelWorkspace() {
   } else if (activeModule === "exportacion") {
     moduleContent = renderExportModule();
   } else if (activeModule === "reciclaje") {
-    moduleContent = <RecyclingWorkspaceV2 onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); }} onContinue={() => navigate("campanas")} />;
+    moduleContent = <RecyclingWorkspaceV2 initialOriginalBaseId={batch?.kind === "ORIGINAL" ? batch.id : batch?.originalBaseId ?? ""} onCreate={(recycled) => { setBatch(recycled); setIsDemoMode(false); setError(null); }} onContinue={() => navigate("campanas")} />;
   } else {
-    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onSaved={(name) => setBatch((current) => current ? { ...current, displayName: name } : current)} onNavigate={() => navigate("dashboard")} />;
+    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onSaved={(name) => setBatch((current) => current ? { ...current, displayName: name } : current)} onNavigate={(target = "dashboard") => navigate(target)} />;
   }
 
   return (

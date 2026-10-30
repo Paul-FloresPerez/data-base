@@ -10,7 +10,6 @@ import {
   type RecyclingInput,
 } from "@/lib/recycling/recycling";
 import { defaultRecyclableTipifications, normalizeRecyclingTipification } from "@/lib/recycling/intelligent-recycling";
-import { recyclingBatchFromOriginal } from "@/lib/recycling/intelligent-batch";
 import { restoreBatch, type LoadedBase } from "@/lib/persistence/workspace-persistence";
 import type { WorkingBatch } from "@/lib/workspace/batch";
 
@@ -24,7 +23,8 @@ type SourceIssue = { fileName: string; reason: string };
 type ImportProgress = { processed: number; total: number; valid: number; failed: number; duplicates: number };
 type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & { webkitdirectory?: string; directory?: string };
 type OriginalBase = { id: string; code: string; name: string; kind: "ORIGINAL" | "RECICLADA"; state: string };
-type RecyclingResult = { id: string; baseOriginalId: string; status: string; summary: Record<string, number> | null; incidentsOutsideBase: number; results: { originalRecordId: string; decision: string; reason: string }[] };
+type RecyclingResult = { id: string; baseOriginalId: string; recycledBaseId: string | null; status: string; createdAt: string; effectiveDate: string; user: string; files: string[]; criteria: { recyclableTipifications: string[] } | null; summary: Record<string, number> | null; incidentsOutsideBase: number; results: { originalRecordId: string; decision: string; reason: string }[] };
+type RecyclingHistoryItem = Omit<RecyclingResult, "results">;
 
 async function api<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, { ...init, headers: { "content-type": "application/json", ...(init?.headers ?? {}) } });
@@ -47,7 +47,23 @@ function importMessage(progress: ImportProgress, issues: SourceIssue[], cancelle
   return `${cancelled ? "Importación cancelada. Resultado parcial" : "Importación terminada"}: ${progress.valid} Excel válidos, ${progress.failed} fallidos${duplicateText}.${issues.length ? " Revisa las incidencias antes de consolidar." : ""}`;
 }
 
-export function RecyclingWorkspaceV2({ onCreate, onContinue }: { onCreate: (batch: WorkingBatch) => void; onContinue: () => void }) {
+function RecyclingHistory({ baseId }: { baseId: string }) {
+  const [items, setItems] = useState<RecyclingHistoryItem[]>([]);
+  const [detail, setDetail] = useState<RecyclingResult | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!baseId) return;
+    let cancelled = false;
+    void api<{ executions: RecyclingHistoryItem[] }>(`/api/reciclaje?baseId=${encodeURIComponent(baseId)}`)
+      .then((result) => { if (!cancelled) setItems(result.executions); })
+      .catch(() => { if (!cancelled) setMessage("No se pudo cargar el historial de reciclajes."); });
+    return () => { cancelled = true; };
+  }, [baseId]);
+  if (!baseId) return null;
+  return <section className="border border-slate-200 bg-white p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-slate-900">Historial de reciclajes</p><p className="mt-1 text-xs text-slate-500">Cada ejecución es una instantánea: consultarla no la recalcula ni modifica.</p></div><span className="text-xs font-semibold text-slate-600">{items.length}</span></div>{message ? <p role="status" className="mt-3 text-xs text-rose-700">{message}</p> : null}{items.length ? <div className="mt-3 divide-y divide-slate-100 border-y border-slate-100">{items.map((item) => <div key={item.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0 text-xs text-slate-600"><p className="font-semibold text-slate-900">{item.effectiveDate} · {item.user} · {item.status.replaceAll("_", " ")}</p><p className="mt-1 truncate">{item.files.length} archivo{item.files.length === 1 ? "" : "s"} CRM · Elegibles {item.summary?.ELEGIBLE ?? 0} · Bloqueados {item.summary?.BLOQUEADO_VENTA ?? 0} · Revisión {(item.summary?.REVISION_GESTION ?? 0) + (item.summary?.REVISION_CONFLICTO ?? 0) + (item.summary?.REVISION_PERMANENCIA ?? 0) + (item.summary?.FUERA_RANGO_HISTORICO ?? 0)}</p></div><button type="button" onClick={() => void api<RecyclingResult>(`/api/reciclaje/${item.id}`).then(setDetail).catch(() => setMessage("No se pudo abrir la ejecución."))} className="shrink-0 text-xs font-semibold text-[#174ea6]">Ver decisiones</button></div>)}</div> : <p className="mt-3 text-xs text-slate-500">Aún no hay ejecuciones para esta base original.</p>}{detail ? <div className="mt-4 border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-slate-900">Ejecución {detail.effectiveDate} · {detail.user}</p><button type="button" onClick={() => setDetail(null)} className="font-semibold text-[#174ea6]">Cerrar</button></div><p className="mt-2">Archivos: {detail.files.join(", ") || "Sin archivo"}. Elegibles {detail.summary?.ELEGIBLE ?? 0}; ventas bloqueadas {detail.summary?.BLOQUEADO_VENTA ?? 0}; incidencias externas {detail.incidentsOutsideBase}.</p><details className="mt-3"><summary className="cursor-pointer font-semibold">Motivos conservados ({detail.results.length})</summary><ul className="mt-2 max-h-36 space-y-1 overflow-auto">{detail.results.map((result) => <li key={result.originalRecordId}>{result.decision.replaceAll("_", " ")}: {result.reason}</li>)}</ul></details></div> : null}</section>;
+}
+
+export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBaseId = "" }: { onCreate: (batch: WorkingBatch) => void; onContinue: () => void; initialOriginalBaseId?: string }) {
   const input = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const cancelImport = useRef(false);
@@ -62,7 +78,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue }: { onCreate: (batc
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [createdBatch, setCreatedBatch] = useState<WorkingBatch | null>(null);
   const [originalBases, setOriginalBases] = useState<OriginalBase[]>([]);
-  const [originalBaseId, setOriginalBaseId] = useState("");
+  const [originalBaseId, setOriginalBaseId] = useState(initialOriginalBaseId);
   const [execution, setExecution] = useState<RecyclingResult | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("es-ES"));
@@ -233,15 +249,13 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue }: { onCreate: (batc
         for (let index = 0; index < rows.length; index += 100) await api(`/api/reciclaje/${started.id}/gestiones`, { method: "POST", body: JSON.stringify({ rows: rows.slice(index, index + 100) }) });
         return api<RecyclingResult>(`/api/reciclaje/${started.id}/finalizar`, { method: "POST" });
       })();
-      const loaded = await api<LoadedBase>(`/api/bases/${originalBaseId}`);
-      const original = restoreBatch(loaded);
-      const sourceRowsByRecordId = new Map(loaded.records.map((record) => [record.id, record.sourceRow]));
-      const eligibleSourceRows = new Set(evaluated.results.filter((result) => result.decision === "ELEGIBLE").flatMap((result) => sourceRowsByRecordId.get(result.originalRecordId) ?? []));
-      const batch = recyclingBatchFromOriginal({ original, originalBaseId, executionId: evaluated.id, eligibleSourceRows });
+      const confirmed = await api<{ baseId: string }>(`/api/reciclaje/${evaluated.id}/confirmar`, { method: "POST" });
+      const loaded = await api<{ base: LoadedBase }>(`/api/bases/${confirmed.baseId}`);
+      const batch = restoreBatch(loaded.base);
       setExecution(evaluated);
       setCreatedBatch(batch);
       onCreate(batch);
-      setMessage(`Evaluación completada: ${eligibleSourceRows.size} móviles elegibles. Guarda la base reciclada para consolidar su relación histórica.`);
+      setMessage(`Evaluación y guardado completados: ${batch.dataset.records.length} móviles elegibles. La base reciclada ya está vinculada de forma permanente al historial.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo evaluar el reciclaje.");
     } finally {
@@ -250,12 +264,12 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue }: { onCreate: (batc
   }
 
   const fileInputs = <><input ref={input} className="sr-only" type="file" accept=".xlsx,.zip,application/zip,application/x-zip-compressed" multiple onChange={handleInput} /><input ref={folderInput} className="sr-only" type="file" accept=".xlsx" multiple {...({ webkitdirectory: "", directory: "", onChange: handleInput } satisfies DirectoryInputProps)} /></>;
-  const importControls = <div className="flex flex-wrap items-center gap-2"><label className="text-sm font-semibold text-slate-700">Base original<select value={originalBaseId} onChange={(event) => { setOriginalBaseId(event.target.value); setCreatedBatch(null); setExecution(null); }} className="ml-2 min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-normal"><option value="">Seleccionar</option>{originalBases.map((base) => <option key={base.id} value={base.id}>{base.code} · {base.name}</option>)}</select></label><button type="button" disabled={importing || !originalBaseId} onClick={() => input.current?.click()} className="rounded-md bg-[#174ea6] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">{importing ? "Procesando…" : "Seleccionar Excel o ZIP"}</button><button type="button" disabled={importing || !originalBaseId} onClick={() => folderInput.current?.click()} className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-60">Carpeta de Excel</button></div>;
+  const importControls = <div className="flex flex-wrap items-center gap-2"><label className="text-sm font-semibold text-slate-700">Base original<select value={originalBaseId} onChange={(event) => { setOriginalBaseId(event.target.value); preparation.current = null; setCreatedBatch(null); setExecution(null); }} className="ml-2 min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-normal"><option value="">Seleccionar</option>{originalBases.map((base) => <option key={base.id} value={base.id}>{base.code} · {base.name}</option>)}</select></label><button type="button" disabled={importing || !originalBaseId} onClick={() => input.current?.click()} className="rounded-md bg-[#174ea6] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">{importing ? "Procesando…" : "Seleccionar Excel o ZIP"}</button><button type="button" disabled={importing || !originalBaseId} onClick={() => folderInput.current?.click()} className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-60">Carpeta de Excel</button></div>;
   const progressPanel = progress ? <section className="border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950"><p className="font-semibold">Procesando {progress.processed} de {progress.total} Excel</p><p className="mt-1">Válidos: {progress.valid} · Fallidos: {progress.failed} · Duplicados omitidos: {progress.duplicates}</p><button type="button" onClick={() => { cancelImport.current = true; }} className="mt-3 font-semibold text-[#174ea6]">Cancelar importación</button></section> : null;
   const issuePanel = issues.length ? <details className="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><summary className="cursor-pointer font-semibold">{issues.length} archivo{issues.length === 1 ? " con incidencia" : "s con incidencias"}</summary><ul className="mt-2 max-h-44 space-y-1 overflow-auto text-xs">{issues.map((issue, index) => <li key={`${issue.fileName}-${index}`}><span className="font-medium">{issue.fileName}</span>: {issue.reason}</li>)}</ul></details> : null;
 
   if (!analysis) {
-    return <section className="space-y-5"><div className="border-b border-slate-200 pb-5"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#174ea6]">Consolidación local</p><h2 className="mt-1 text-2xl font-semibold text-[#0f274f]">Reciclaje CRM</h2><p className="mt-2 max-w-3xl text-sm text-slate-600">Importa varios XLSX o ZIP con subcarpetas. Todo se procesa en este navegador y no se envía a Neon ni a una API.</p></div>{fileInputs}{importControls}<p className="text-xs text-slate-500">Límites: 500 Excel, 30 MB por Excel, 250 MB por ZIP comprimido y 750 MB descomprimidos por ZIP. La carpeta es opcional y depende del navegador.</p>{progressPanel}{message ? <p role="status" className="text-sm text-slate-700">{message}</p> : null}{issuePanel}</section>;
+    return <section className="space-y-5"><div className="border-b border-slate-200 pb-5"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#174ea6]">Consolidación local</p><h2 className="mt-1 text-2xl font-semibold text-[#0f274f]">Reciclaje CRM</h2><p className="mt-2 max-w-3xl text-sm text-slate-600">Importa varios XLSX o ZIP con subcarpetas. Todo se procesa en este navegador y no se envía a Neon ni a una API.</p></div>{fileInputs}{importControls}<RecyclingHistory baseId={originalBaseId} /><p className="text-xs text-slate-500">Límites: 500 Excel, 30 MB por Excel, 250 MB por ZIP comprimido y 750 MB descomprimidos por ZIP. La carpeta es opcional y depende del navegador.</p>{progressPanel}{message ? <p role="status" className="text-sm text-slate-700">{message}</p> : null}{issuePanel}</section>;
   }
 
   const summary: [string, number][] = [["Archivos válidos", analysis.files.length], ["Gestiones", analysis.records.length], ["Móviles únicos", analysis.counts.moviles], ["Duplicados", analysis.counts.duplicados], ["Ventas bloqueadas", execution?.summary?.BLOQUEADO_VENTA ?? 0], ["Sin permanencia", execution?.summary?.REVISION_PERMANENCIA ?? 0], ["En revisión", (execution?.summary?.REVISION_GESTION ?? 0) + (execution?.summary?.REVISION_CONFLICTO ?? 0) + (execution?.summary?.FUERA_RANGO_HISTORICO ?? 0)], ["Exportables", execution?.summary?.ELEGIBLE ?? selectedCount], ["Ajenos a base", execution?.incidentsOutsideBase ?? 0]];

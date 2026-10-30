@@ -51,9 +51,21 @@ test("las rutas de reciclaje requieren sesión administrativa y no importan Soza
     "../app/api/reciclaje/[executionId]/route.ts",
     "../app/api/reciclaje/[executionId]/gestiones/route.ts",
     "../app/api/reciclaje/[executionId]/finalizar/route.ts",
+    "../app/api/reciclaje/[executionId]/confirmar/route.ts",
   ].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
   for (const route of routes) {
     assert.match(route, /requireAdminApi/);
     assert.doesNotMatch(route, /sozar|fetch\(/i);
   }
+});
+
+test("la confirmación crea una única base derivada desde el snapshot del servidor", async () => {
+  const storage = await readFile(new URL("../lib/server/recycling-storage.ts", import.meta.url), "utf8");
+  assert.match(storage, /export async function confirmIntelligentRecycling/);
+  assert.match(storage, /prisma\.\$transaction\(async \(tx\)/);
+  assert.match(storage, /estado: "EVALUADA", baseRecicladaId: null/);
+  assert.match(storage, /data: \{ estado: "EVALUANDO" \}/);
+  assert.match(storage, /baseRecicladaId: recycled\.id, estado: "BASE_GENERADA"/);
+  assert.match(storage, /eligibleIds = new Set\(execution\.resultados/);
+  assert.doesNotMatch(storage, /sozar|fetch\(/i);
 });

@@ -174,16 +174,19 @@ model EjecucionReciclaje {
   operacionId     String                    @unique @map("operacion_id")
   baseOriginalId  String                    @map("base_original_id") @db.Uuid
   baseRecicladaId String?                   @unique @map("base_reciclada_id") @db.Uuid
+  usuarioId       String?                   @map("usuario_id") @db.Uuid
   fechaEfectiva   DateTime                  @map("fecha_efectiva") @db.Date
   estado          EstadoEjecucionReciclaje  @default(PREPARADA)
   metadatos       Json
   creadoEn        DateTime                  @default(now()) @map("creado_en")
   baseOriginal    Base                      @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
   baseReciclada   Base?                     @relation("BaseReciclada", fields: [baseRecicladaId], references: [id], onDelete: Restrict)
+  usuario         Usuario?                  @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
   gestiones       GestionTipificacion[]
   resultados      ResultadoEjecucionReciclaje[]
 
   @@index([baseOriginalId, creadoEn])
+  @@index([usuarioId, creadoEn])
   @@map("ejecuciones_reciclaje")
 }
 
@@ -252,6 +255,7 @@ model Usuario {
   eventosAuditoria EventoAuditoria[]
   exportaciones RegistroExportacion[]
   aprobacionesHlr AprobacionHlr[]
+  ejecucionesReciclaje EjecucionReciclaje[]
 
   @@map("usuarios")
 }

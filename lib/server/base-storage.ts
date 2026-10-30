@@ -4,8 +4,8 @@ import { Prisma } from "@/generated/prisma/client";
 import { enrichmentScalars, type SaveStartPayload, type SavedLot, type StoredMetadata, type StoredRecord } from "@/lib/persistence/workspace-persistence";
 import { prisma } from "@/lib/server/prisma";
 import { appendBaseLifecycleEvents } from "@/lib/server/audit-storage";
-import { formatBaseCode } from "@/lib/base-history/catalog";
 import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
+import { nextBaseCode } from "@/lib/server/base-code";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -17,19 +17,6 @@ function receiptDate(value: string | null): Date | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-async function nextBaseCode(transaction: Prisma.TransactionClient, receivedAt: Date | null): Promise<string> {
-  const date = receivedAt ?? new Date();
-  const period = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-  const rows = await transaction.$queryRaw<Array<{ ultimo_numero: number }>>(Prisma.sql`
-    INSERT INTO "secuencias_codigos_base" ("periodo", "ultimo_numero") VALUES (${period}, 1)
-    ON CONFLICT ("periodo") DO UPDATE SET "ultimo_numero" = "secuencias_codigos_base"."ultimo_numero" + 1
-    RETURNING "ultimo_numero"
-  `);
-  const sequence = rows[0]?.ultimo_numero;
-  if (!sequence) throw new Error("No se pudo generar el código de la base.");
-  return formatBaseCode(date, sequence);
 }
 
 export async function beginBaseSave(input: SaveStartPayload) {

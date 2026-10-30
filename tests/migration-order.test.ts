@@ -11,6 +11,7 @@ const expected = [
   "20261026090100_add_shared_login_rate_limits",
   "20261029090000_add_base_history_catalog",
   "20261030090000_add_intelligent_recycling_history",
+  "20261031090000_add_recycling_execution_author",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -19,7 +20,9 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   const sql = await Promise.all(expected.slice(2).map(async (name) =>
     readFile(new URL(`../prisma/migrations/${name}/migration.sql`, import.meta.url), "utf8"),
   ));
-  for (const migration of sql.slice(0, -2)) {
+  // The historical catalogue intentionally backfills legacy rows. Every
+  // subsequent migration must stay add-only without data rewrites.
+  for (const migration of sql.slice(0, -3)) {
     assert.doesNotMatch(migration, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
   }
   assert.match(sql[0]!, /CREATE TABLE "eventos_auditoria"/);
@@ -30,4 +33,6 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[4]!, /CREATE TABLE "gestiones_tipificacion"/);
   assert.match(sql[4]!, /CREATE TABLE "resultados_ejecuciones_reciclaje"/);
   assert.doesNotMatch(sql[4]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM)/im);
+  assert.match(sql[5]!, /ADD COLUMN "usuario_id" UUID/);
+  assert.doesNotMatch(sql[5]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });
