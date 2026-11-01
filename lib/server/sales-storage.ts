@@ -52,8 +52,9 @@ export async function importExternalSales(input: SalesImportInput) {
     foundInBases: validMobiles.filter((mobile) => inBase.has(mobile)).length,
     alreadyBlocked: validMobiles.filter((mobile) => alreadyBlocked.has(mobile)).length,
   };
-  await prisma.$transaction(async (tx) => {
-    await tx.importacionVentas.create({
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.importacionVentas.create({
       data: {
         importacionId: input.importId,
         huellaContenido: input.sourceFingerprint,
@@ -75,8 +76,16 @@ export async function importExternalSales(input: SalesImportInput) {
           })),
         },
       },
+      });
     });
-  });
+  } catch (error) {
+    // A simultaneous reimport is harmless: the unique content fingerprint
+    // wins and both callers observe the same historical import.
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+    const raced = await prisma.importacionVentas.findUnique({ where: { huellaContenido: input.sourceFingerprint }, select: { resumen: true } });
+    if (!raced) throw error;
+    return { reused: true, summary: raced.resumen };
+  }
   return { reused: false, summary };
 }
 
