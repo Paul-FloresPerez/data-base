@@ -1,6 +1,6 @@
 import "server-only";
 
-import { isNullLikeName, normalizeSpanishMobile } from "../excel/cleaning.ts";
+import { isNullLikeName, normalizeSpanishMobile, spanishMobileExclusionReason } from "../excel/cleaning.ts";
 import type { ColumnMapping, ExclusionReason } from "../excel/types.ts";
 import type { SavedLot, StoredRecord, StoredTipification } from "../persistence/workspace-persistence.ts";
 
@@ -14,15 +14,8 @@ const tipificationByReason: Record<ExclusionReason, StoredTipification> = {
 
 export type DerivedRecordIntegrity = Pick<StoredRecord, "normalizedMobile" | "reason" | "tipification">;
 
-function mobileReason(value: string): ExclusionReason | null {
-  const compact = value.trim().replace(/[\s-]/g, "").replace(/^(\+34|0034)/, "");
-  if (!compact) return "telefono_vacio";
-  if (/^[89]\d{8}$/.test(compact)) return "telefono_fijo";
-  return normalizeSpanishMobile(value) ? null : "telefono_invalido";
-}
-
 function basicIntegrity(record: StoredRecord, mapping: ColumnMapping): DerivedRecordIntegrity {
-  const phoneFailure = mobileReason(record.mobile);
+  const phoneFailure = spanishMobileExclusionReason(record.mobile);
   if (phoneFailure) return { normalizedMobile: null, reason: phoneFailure, tipification: tipificationByReason[phoneFailure] };
   if (mapping.nombre !== undefined && isNullLikeName(record.name)) {
     return { normalizedMobile: null, reason: "nombre_vacio", tipification: "NOMBRE_VACIO" };

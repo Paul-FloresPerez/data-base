@@ -34,7 +34,7 @@ export function normalizeSpanishMobile(value: string): string | null {
   return /^[67]\d{8}$/.test(compact) ? compact : null;
 }
 
-function phoneReason(value: string): ExclusionReason | null {
+export function spanishMobileExclusionReason(value: string): ExclusionReason | null {
   const compact = value.trim().replace(/[\s-]/g, "").replace(/^(\+34|0034)/, "");
 
   if (compact.length === 0) {
@@ -55,7 +55,7 @@ export function cleanDataset(dataset: ImportedDataset): CleaningResult {
   const reasonBreakdown = emptyBreakdown();
 
   for (const record of dataset.records) {
-    const invalidPhoneReason = phoneReason(record.mobile);
+    const invalidPhoneReason = spanishMobileExclusionReason(record.mobile);
 
     if (invalidPhoneReason) {
       excludedRecords.push({ ...record, reason: invalidPhoneReason });

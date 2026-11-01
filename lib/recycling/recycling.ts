@@ -9,7 +9,8 @@ export const knownTipifications = [...candidateTipifications, ...followUpTipific
 export type RecyclingBucket = "candidato" | "seguimiento" | "revision" | "bloqueado";
 export interface RecyclingInput { fileName: string; zipName?: string; internalPath?: string; sheetName?: string; columns: string[]; rows: string[][] }
 export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; confirmedSale: boolean; saleAmbiguous: boolean; saleEvidence?: string; bucket: RecyclingBucket; reviewReason?: string }
-export interface RecyclingAnalysis { columns: string[]; records: RecyclingRecord[]; winners: RecyclingRecord[]; counts: Record<RecyclingBucket | "duplicados" | "moviles", number>; tipifications: Record<string, number>; files: string[] }
+export interface RecyclingConciliationRow { fileKey: string; fileName: string; sourceRow: number; mobile: string }
+export interface RecyclingAnalysis { columns: string[]; records: RecyclingRecord[]; winners: RecyclingRecord[]; counts: Record<RecyclingBucket | "duplicados" | "moviles", number>; tipifications: Record<string, number>; files: string[]; conciliationRows: RecyclingConciliationRow[] }
 
 const aliases: Record<string, string[]> = {
   mobile: ["telefonomovil", "telefonosmovil", "movil", "móvil", "celular"],
@@ -32,12 +33,14 @@ function bucket(tipification: string, blocked: boolean, known: boolean): Recycli
 }
 
 export function analyzeRecyclingFiles(inputs: RecyclingInput[]): RecyclingAnalysis {
-  const all: RecyclingRecord[] = []; const files: string[] = []; const union = new Map<string, number>(); let internalRow = 2;
+  const all: RecyclingRecord[] = []; const files: string[] = []; const conciliationRows: RecyclingConciliationRow[] = []; const union = new Map<string, number>(); let internalRow = 2;
   for (const input of inputs) input.columns.forEach((header) => { if (!union.has(header)) union.set(header, union.size); });
   for (const input of inputs) {
     files.push(input.fileName);
     const mobileIndex = column(input.columns, "mobile"), tipIndex = column(input.columns, "tipification"), dateIndex = column(input.columns, "date"), blockIndex = column(input.columns, "opposition"), confirmedSaleIndex = column(input.columns, "confirmedSale"), ambiguousSaleIndex = column(input.columns, "ambiguousSale");
+    const fileKey = `${input.zipName ?? ""}|${input.internalPath ?? ""}|${input.fileName}`;
     for (const [index, cells] of input.rows.entries()) {
+      conciliationRows.push({ fileKey, fileName: input.fileName, sourceRow: index + 2, mobile: cells[mobileIndex] ?? "" });
       const mobile = normalizeSpanishMobile(cells[mobileIndex] ?? ""); if (!mobile) continue;
       const tipification = (cells[tipIndex] ?? "").trim().toLocaleUpperCase("es-ES"); const known = knownTipifications.includes(tipification as never);
       const confirmedSale = confirmedSaleIndex >= 0 && isConfirmedSale(cells[confirmedSaleIndex] ?? "");
@@ -51,7 +54,7 @@ export function analyzeRecyclingFiles(inputs: RecyclingInput[]): RecyclingAnalys
   for (const record of all) { const prior = winnersByMobile.get(record.mobile); if (!prior || (record.bucket === "bloqueado" && prior.bucket !== "bloqueado") || (record.bucket !== "bloqueado" && prior.bucket !== "bloqueado" && dateValue(record.date) > dateValue(prior.date))) winnersByMobile.set(record.mobile, record); }
   const winners = [...winnersByMobile.values()]; const counts = { candidato: 0, seguimiento: 0, revision: 0, bloqueado: 0, duplicados: all.length - winners.length, moviles: winners.length };
   const tipifications: Record<string, number> = {}; for (const record of all) { tipifications[record.tipification || "SIN TIPIFICACIÓN"] = (tipifications[record.tipification || "SIN TIPIFICACIÓN"] ?? 0) + 1; } for (const record of winners) counts[record.bucket] += 1;
-  return { columns: [...union.keys(), "ZIP origen", "Ruta interna", "Archivo origen", "Hoja origen", "Fila origen", "Móvil normalizado", "Procedencia", "Estado reciclaje", "Motivo revisión"], records: all, winners, counts, tipifications, files };
+  return { columns: [...union.keys(), "ZIP origen", "Ruta interna", "Archivo origen", "Hoja origen", "Fila origen", "Móvil normalizado", "Procedencia", "Estado reciclaje", "Motivo revisión"], records: all, winners, counts, tipifications, files, conciliationRows };
 }
 
 export function recyclingToBatch(analysis: RecyclingAnalysis, selectedTipifications: Set<string>): WorkingBatch {

@@ -1,11 +1,13 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { Prisma } from "@/generated/prisma/client";
 import { normalizeSpanishMobile } from "@/lib/excel/cleaning";
 import { portabilityDateForStorage } from "@/lib/excel/portability-date";
 import { evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification, type RecyclingCriteria } from "@/lib/recycling/intelligent-recycling";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { prisma } from "@/lib/server/prisma";
+import { conciliateCrmRows, type ConciliationRow, type ConciliationSummary } from "@/lib/recycling/conciliation";
 
 type FileInput = { importId: string; name: string };
 export type ManagementInput = {
@@ -35,6 +37,38 @@ function asDate(value: string | null): Date | null {
 function safeText(value: string | null, limit: number): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed ? trimmed.slice(0, limit) : null;
+}
+
+function fingerprintConciliation(rows: readonly ConciliationRow[]): string {
+  return createHash("sha256").update(JSON.stringify(rows.map((row) => [row.fileId, row.sourceRow, row.mobile]))).digest("hex");
+}
+
+export async function previewRecyclingConciliation(input: { executionId: string; userId: string; rows: ConciliationRow[] }) {
+  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: input.executionId }, select: { baseOriginalId: true, usuarioId: true, estado: true, metadatos: true } });
+  if (!execution || execution.estado !== "PREPARADA" || execution.usuarioId !== input.userId) throw new Error("La ejecución no está disponible para conciliación.");
+  if (input.rows.length > 10_000 || input.rows.some((row) => !row.fileId || !row.fileName.trim() || !Number.isInteger(row.sourceRow) || row.sourceRow < 2 || typeof row.mobile !== "string" || row.mobile.length > 80)) throw new Error("Las filas de conciliación no son válidas.");
+  const files = await prisma.archivoTipificaciones.findMany({ where: { importacionId: { in: [...new Set(input.rows.map((row) => row.fileId))] }, baseId: execution.baseOriginalId }, select: { id: true, importacionId: true, resumen: true } });
+  if (files.length !== new Set(input.rows.map((row) => row.fileId)).size) throw new Error("Archivo de tipificaciones no válido para esta base.");
+  const normalized = [...new Set(input.rows.flatMap((row) => { const mobile = normalizeSpanishMobile(row.mobile); return mobile ? [mobile] : []; }))];
+  const existingMobiles = new Set<string>();
+  for (let index = 0; index < normalized.length; index += 1_000) {
+    const rows = await prisma.registro.findMany({ where: { baseId: execution.baseOriginalId, movilNormalizado: { in: normalized.slice(index, index + 1_000) } }, select: { movilNormalizado: true } });
+    for (const row of rows) if (row.movilNormalizado) existingMobiles.add(row.movilNormalizado);
+  }
+  const summary = conciliateCrmRows(input.rows, existingMobiles);
+  const fingerprint = fingerprintConciliation(input.rows);
+  const metadata = execution.metadatos as Record<string, unknown>;
+  const previous = metadata.conciliation as { fingerprint?: unknown } | undefined;
+  if (previous?.fingerprint && previous.fingerprint !== fingerprint) throw new Error("La conciliación ya fue preparada con archivos distintos.");
+  await prisma.$transaction(async (tx) => {
+    for (const file of files) {
+      const fileSummary = summary.files.find((item) => item.fileId === file.importacionId);
+      if (!fileSummary) continue;
+      await tx.archivoTipificaciones.update({ where: { id: file.id }, data: { resumen: { ...(file.resumen as object), conciliacion: fileSummary } as Prisma.InputJsonValue } });
+    }
+    await tx.ejecucionReciclaje.update({ where: { id: input.executionId }, data: { metadatos: { ...metadata, conciliacion: { version: 1, status: "PREVISUALIZADA", fingerprint, summary } } as Prisma.InputJsonValue } });
+  });
+  return summary;
 }
 
 export async function beginIntelligentRecycling(input: {
@@ -79,16 +113,21 @@ export async function beginIntelligentRecycling(input: {
   });
 }
 
-export async function appendRecyclingManagements(executionId: string, rows: ManagementInput[]) {
-  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: executionId }, select: { baseOriginalId: true, estado: true } });
-  if (!execution || execution.estado !== "PREPARADA") throw new Error("La ejecución ya no admite nuevas gestiones.");
+export async function appendRecyclingManagements(executionId: string, userId: string, rows: ManagementInput[]) {
+  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: executionId }, select: { baseOriginalId: true, usuarioId: true, estado: true, metadatos: true } });
+  if (!execution || execution.estado !== "PREPARADA" || execution.usuarioId !== userId) throw new Error("La ejecución ya no admite nuevas gestiones.");
+  if ((execution.metadatos as { conciliacion?: { status?: string } }).conciliacion?.status !== "PREVISUALIZADA") throw new Error("Confirma primero la conciliación de los archivos CRM.");
   const importIds = [...new Set(rows.map((row) => row.importId))];
   const files = await prisma.archivoTipificaciones.findMany({ where: { importacionId: { in: importIds }, baseId: execution.baseOriginalId }, select: { id: true, importacionId: true } });
   const fileIds = new Map(files.map((file) => [file.importacionId, file.id]));
   if (fileIds.size !== importIds.length) throw new Error("Archivo de tipificaciones no válido para esta base.");
-  const data = rows.map((row) => {
+  const normalizedRows = rows.flatMap((row) => {
     const mobile = normalizeSpanishMobile(row.mobile);
-    if (!mobile || row.sourceRow < 2 || !Number.isInteger(row.sourceRow)) throw new Error("Gestión CRM no válida.");
+    if (!mobile || row.sourceRow < 2 || !Number.isInteger(row.sourceRow)) return [];
+    return [{ row, mobile }];
+  });
+  const matched = new Set((await prisma.registro.findMany({ where: { baseId: execution.baseOriginalId, movilNormalizado: { in: [...new Set(normalizedRows.map((item) => item.mobile))] } }, select: { movilNormalizado: true } })).flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []));
+  const data = normalizedRows.filter((item) => matched.has(item.mobile)).map(({ row, mobile }) => {
     return {
       archivoId: fileIds.get(row.importId)!,
       ejecucionOrigenId: executionId,
@@ -104,12 +143,14 @@ export async function appendRecyclingManagements(executionId: string, rows: Mana
     };
   });
   const created = await prisma.gestionTipificacion.createMany({ data, skipDuplicates: true });
-  return { accepted: created.count };
+  return { accepted: created.count, skippedExternal: normalizedRows.length - data.length, skippedInvalid: rows.length - normalizedRows.length };
 }
 
-export async function finalizeIntelligentRecycling(executionId: string) {
-  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: executionId }, select: { id: true, baseOriginalId: true, fechaEfectiva: true, estado: true, metadatos: true } });
+export async function finalizeIntelligentRecycling(executionId: string, userId: string) {
+  const execution = await prisma.ejecucionReciclaje.findUnique({ where: { id: executionId }, select: { id: true, baseOriginalId: true, usuarioId: true, fechaEfectiva: true, estado: true, metadatos: true } });
   if (!execution) throw new Error("Ejecución de reciclaje no encontrada.");
+  if (execution.usuarioId !== userId) throw new Error("La ejecución pertenece a otro usuario.");
+  if ((execution.metadatos as { conciliacion?: { status?: string } }).conciliacion?.status !== "PREVISUALIZADA") throw new Error("Confirma primero la conciliación de los archivos CRM.");
   if (execution.estado === "EVALUADA" || execution.estado === "BASE_GENERADA") return getRecyclingExecution(executionId);
   const claimed = await prisma.ejecucionReciclaje.updateMany({ where: { id: executionId, estado: "PREPARADA" }, data: { estado: "EVALUANDO" } });
   if (claimed.count !== 1) throw new Error("La ejecución ya está siendo evaluada.");
@@ -151,7 +192,7 @@ export async function getRecyclingExecution(executionId: string) {
     },
   });
   if (!execution) throw new Error("Ejecución de reciclaje no encontrada.");
-  const metadata = execution.metadatos as { summary?: Record<string, number>; incidentsOutsideBase?: number; criteria?: RecyclingCriteria };
+  const metadata = execution.metadatos as { summary?: Record<string, number>; incidentsOutsideBase?: number; criteria?: RecyclingCriteria; conciliacion?: { summary?: ConciliationSummary } };
   return {
     id: execution.id,
     baseOriginalId: execution.baseOriginalId,
@@ -163,6 +204,7 @@ export async function getRecyclingExecution(executionId: string) {
     criteria: metadata.criteria ?? null,
     summary: metadata.summary ?? null,
     incidentsOutsideBase: metadata.incidentsOutsideBase ?? 0,
+    conciliation: metadata.conciliacion?.summary ?? null,
     files: [...new Set(execution.gestiones.map((management) => management.archivo.nombreArchivo))],
     results: execution.resultados.map((result) => ({ originalRecordId: result.registroOriginalId, decision: result.estado, reason: result.motivo })),
   };
@@ -296,7 +338,7 @@ export async function listRecyclingHistory(baseOriginalId: string) {
     },
   });
   return executions.map((execution) => {
-    const metadata = execution.metadatos as { criteria?: RecyclingCriteria; summary?: Record<string, number>; incidentsOutsideBase?: number };
+    const metadata = execution.metadatos as { criteria?: RecyclingCriteria; summary?: Record<string, number>; incidentsOutsideBase?: number; conciliacion?: { summary?: ConciliationSummary } };
     const counts = execution.resultados.reduce<Record<string, number>>((result, row) => ({ ...result, [row.estado]: (result[row.estado] ?? 0) + 1 }), {});
     return {
       id: execution.id,
@@ -309,6 +351,7 @@ export async function listRecyclingHistory(baseOriginalId: string) {
       files: [...new Set(execution.gestiones.map((management) => management.archivo.nombreArchivo))],
       summary: metadata.summary ?? counts,
       incidentsOutsideBase: metadata.incidentsOutsideBase ?? 0,
+      conciliation: metadata.conciliacion?.summary ?? null,
     };
   });
 }
