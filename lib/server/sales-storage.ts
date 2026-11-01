@@ -38,6 +38,11 @@ export async function importExternalSales(input: SalesImportInput) {
   if (existing) return { reused: true, summary: existing.resumen };
 
   const validMobiles = input.events.filter((event) => event.reason === "VALIDA" && event.mobile).map((event) => event.mobile!);
+  // Only confirmed sales contend with commercial distribution. Ambiguous and
+  // non-confirmed rows remain historical records without serializing lots.
+  const confirmedMobiles = input.events
+    .filter((event) => event.reason === "VALIDA" && event.saleStatus === "CONFIRMADA" && event.mobile)
+    .map((event) => event.mobile!);
   const [inBases, alreadyBlocked] = await Promise.all([
     prisma.registro.findMany({ where: { movilNormalizado: { in: validMobiles } }, select: { movilNormalizado: true }, distinct: ["movilNormalizado"] }),
     confirmedExternalSales(validMobiles),
@@ -55,7 +60,7 @@ export async function importExternalSales(input: SalesImportInput) {
   };
   try {
   await prisma.$transaction(async (tx) => {
-      await lockCommercialMobiles(tx, validMobiles);
+      await lockCommercialMobiles(tx, confirmedMobiles);
       await tx.importacionVentas.create({
       data: {
         importacionId: input.importId,
