@@ -20,9 +20,13 @@ const controlBaseId = randomUUID();
 const saleImportId = randomUUID();
 const concurrentBaseId = randomUUID();
 const concurrentImportId = randomUUID();
+const independentBaseAId = randomUUID();
+const independentBaseBId = randomUUID();
 const mobileBlocked = "612345678";
 const mobileControl = "712345678";
 const mobileConcurrent = "622345678";
+const mobileIndependentA = "632345678";
+const mobileIndependentB = "722345678";
 
 function metadata(revision: string) {
   return { version: 1, completed: false, revision, originalFileName: `synthetic-${testRunId}.xlsx`, columns: ["Teléfono Movil"], columnMapping: { movil: 0, enriched: {} }, enrichmentColumns: null, enrichmentMode: "preserve", campaignFilters: {}, distribution: { batchSize: 100, selectedCampaigns: ["yoigo"] }, enrichmentSource: null, testRunId };
@@ -80,9 +84,22 @@ try {
   if ((lotWon && (concurrentLots !== 1 || !concurrentCompleted)) || (!lotWon && (concurrentLots !== 0 || concurrentCompleted))) {
     throw new Error("Concurrent sale and lot persistence reached an inconsistent state.");
   }
-  console.log(JSON.stringify({ target: "test", testRunId, completeBaseSaveInvoked: true, confirmedSaleRejected: true, controlPersisted: true, concurrentServices: true, concurrentOutcome: lotWon ? "LOT_FIRST" : "SALE_FIRST", blockedLots, controlLots, concurrentLots }));
+  const independentRevisionA = randomUUID();
+  const independentRevisionB = randomUUID();
+  await Promise.all([
+    createBase(independentBaseAId, mobileIndependentA, independentRevisionA),
+    createBase(independentBaseBId, mobileIndependentB, independentRevisionB),
+  ]);
+  const independentResults = await Promise.allSettled([
+    completeBaseSave(independentBaseAId, independentRevisionA, [{ campaign: "YOIGO", number: 1, sourceRows: [2] }], userId),
+    completeBaseSave(independentBaseBId, independentRevisionB, [{ campaign: "YOIGO", number: 1, sourceRows: [2] }], userId),
+  ]);
+  if (independentResults.some((result) => result.status !== "fulfilled")) throw new Error("Independent mobiles were unexpectedly blocked.");
+  const independentLots = await prisma.lote.count({ where: { baseId: { in: [independentBaseAId, independentBaseBId] } } });
+  if (independentLots !== 2) throw new Error("Independent mobile lots were not both persisted.");
+  console.log(JSON.stringify({ target: "test", testRunId, completeBaseSaveInvoked: true, confirmedSaleRejected: true, controlPersisted: true, concurrentServices: true, concurrentOutcome: lotWon ? "LOT_FIRST" : "SALE_FIRST", independentMobilesPersisted: true, blockedLots, controlLots, concurrentLots, independentLots }));
 } finally {
-  const baseIds = [blockedBaseId, controlBaseId, concurrentBaseId];
+  const baseIds = [blockedBaseId, controlBaseId, concurrentBaseId, independentBaseAId, independentBaseBId];
   const auditIds = (await prisma.eventoAuditoria.findMany({ where: { baseId: { in: baseIds }, usuarioId: userId }, select: { id: true } })).map((event) => event.id);
   if (auditIds.length) await prisma.eventoAuditoria.deleteMany({ where: { id: { in: auditIds } } });
   const importIds = (await prisma.importacionVentas.findMany({ where: { importacionId: { in: [saleImportId, concurrentImportId] } }, select: { id: true } })).map((item) => item.id);
