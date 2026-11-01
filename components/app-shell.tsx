@@ -4,13 +4,14 @@ import type { ReactNode } from "react";
 import type { BatchSummary } from "@/lib/workspace/batch";
 import { LogoutButton } from "@/components/logout-button";
 
-export type WorkspaceModule = "dashboard" | "bases" | "reciclaje" | "importacion" | "limpieza" | "enriquecimiento" | "campanas" | "distribucion" | "exportacion";
+export type WorkspaceModule = "dashboard" | "bases" | "reciclaje" | "ventas" | "importacion" | "limpieza" | "enriquecimiento" | "campanas" | "distribucion" | "exportacion";
 
 const primaryModules = [
   { id: "dashboard", label: "Inicio", description: "Resumen y actividad" },
   { id: "procesar", label: "Procesar base", description: "Importar, validar y exportar" },
   { id: "bases", label: "Mis bases", description: "Historial en Neon" },
   { id: "reciclaje", label: "Reciclaje", description: "Consolidación CRM" },
+  { id: "ventas", label: "Ventas", description: "Bloqueo comercial global" },
 ] as const;
 
 export interface WorkflowStep {

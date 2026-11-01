@@ -67,6 +67,13 @@ enum EstadoResultadoReciclaje {
   FUERA_RANGO_HISTORICO
 }
 
+enum EstadoVentaExterna {
+  CONFIRMADA
+  AMBIGUA
+  NO_CONFIRMADA
+  CORREGIDA
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
   codigo              String     @unique
@@ -256,8 +263,49 @@ model Usuario {
   exportaciones RegistroExportacion[]
   aprobacionesHlr AprobacionHlr[]
   ejecucionesReciclaje EjecucionReciclaje[]
+  importacionesVentas ImportacionVentas[]
 
   @@map("usuarios")
+}
+
+/// Append-only external commercial events. They are deliberately independent
+/// of a particular Base: a confirmed sale must block the mobile everywhere.
+model ImportacionVentas {
+  id                String           @id @default(uuid()) @db.Uuid
+  importacionId     String           @unique @map("importacion_id")
+  huellaContenido   String           @unique @map("huella_contenido")
+  usuarioId         String           @map("usuario_id") @db.Uuid
+  nombreArchivo     String           @map("nombre_archivo")
+  periodoDeclarado  String?          @map("periodo_declarado")
+  resumen           Json
+  creadoEn          DateTime         @default(now()) @map("creado_en")
+  usuario           Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  eventos           VentaExterna[]
+
+  @@index([creadoEn])
+  @@index([usuarioId, creadoEn])
+  @@map("importaciones_ventas")
+}
+
+model VentaExterna {
+  id                   String              @id @default(uuid()) @db.Uuid
+  importacionId         String              @map("importacion_id") @db.Uuid
+  numeroFilaOrigen      Int                 @map("numero_fila_origen")
+  movilNormalizado      String?             @map("movil_normalizado")
+  fechaVenta            DateTime?           @map("fecha_venta") @db.Date
+  estado                EstadoVentaExterna
+  estadoOriginal        String?             @map("estado_original")
+  asesor                String?
+  campana               String?
+  resultadoConciliacion String              @map("resultado_conciliacion")
+  metadatos             Json
+  creadoEn              DateTime            @default(now()) @map("creado_en")
+  importacion           ImportacionVentas   @relation(fields: [importacionId], references: [id], onDelete: Restrict)
+
+  @@unique([importacionId, numeroFilaOrigen])
+  @@index([movilNormalizado, estado])
+  @@index([fechaVenta])
+  @@map("ventas_externas")
 }
 
 model EventoAuditoria {

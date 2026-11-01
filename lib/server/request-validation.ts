@@ -2,9 +2,9 @@ import "server-only";
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request, maximumBytes = 900_000): Promise<unknown> {
   const length = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(length) && length > 900_000) throw new Error("Solicitud demasiado grande.");
+  if (Number.isFinite(length) && length > maximumBytes) throw new Error("Solicitud demasiado grande.");
   return request.json();
 }
 

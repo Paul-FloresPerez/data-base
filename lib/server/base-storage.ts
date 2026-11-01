@@ -7,6 +7,7 @@ import { appendBaseLifecycleEvents } from "@/lib/server/audit-storage";
 import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
+import { confirmedExternalSales } from "@/lib/server/sales-storage";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -142,6 +143,17 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
     }
     if (base.estado === "LISTA_PARA_LIMPIAR" && lots.length > 0) throw new Error("Una base sin limpiar no puede contener lotes.");
     assertLotsIntegrity(lots, derived);
+    // This is intentionally enforced immediately before persisting lots, not
+    // only in the browser campaign view. A confirmed external sale blocks the
+    // mobile across every base and campaign.
+    const mobilesToDistribute = lots.flatMap((lot) => lot.sourceRows.flatMap((row) => {
+      const mobile = derived.get(row)?.normalizedMobile;
+      return mobile ? [mobile] : [];
+    }));
+    const commerciallyBlocked = await confirmedExternalSales(mobilesToDistribute);
+    if (commerciallyBlocked.size) {
+      throw new Error("No se puede distribuir un móvil con una venta comercial confirmada.");
+    }
     const byRow = new Map(savedRecords.map((record) => [record.numeroFilaOriginal, record.id]));
     await prisma.$transaction(async (transaction) => {
       await transaction.lote.deleteMany({ where: { baseId } });

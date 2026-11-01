@@ -17,6 +17,7 @@ const nextActionLabels: Record<WorkspaceModule, string> = {
   dashboard: "Ver resumen",
   bases: "Ver mis bases",
   reciclaje: "Abrir reciclaje",
+  ventas: "Abrir ventas",
   importacion: "Importar base",
   limpieza: "Continuar a limpieza",
   enriquecimiento: "Continuar a enriquecimiento",

@@ -7,6 +7,7 @@ import { portabilityDateForStorage } from "@/lib/excel/portability-date";
 import { evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification, type RecyclingCriteria } from "@/lib/recycling/intelligent-recycling";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { prisma } from "@/lib/server/prisma";
+import { confirmedExternalSales } from "@/lib/server/sales-storage";
 import { conciliateCrmRows, type ConciliationRow, type ConciliationSummary } from "@/lib/recycling/conciliation";
 
 type FileInput = { importId: string; name: string };
@@ -166,10 +167,12 @@ export async function finalizeIntelligentRecycling(executionId: string, userId: 
       minimumMonths: 4,
       minimumDate: minimumPortabilityDate,
     };
+    const externallyBlocked = await confirmedExternalSales(records.flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []));
     const evaluation = evaluateIntelligentRecycling(
       records.map((record) => ({ id: record.id, mobile: record.movilNormalizado, portabilityDate: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null })),
       managements.map((management) => ({ id: management.id, mobile: management.movilNormalizado, managedAt: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificationOriginal: management.tipificacionOriginal, confirmedSale: management.ventaConfirmada, saleAmbiguous: Boolean((management.metadatos as { saleAmbiguous?: unknown }).saleAmbiguous), saleEvidence: management.evidenciaVenta })),
       criteria,
+      externallyBlocked,
     );
     await prisma.$transaction(async (tx) => {
       await tx.resultadoEjecucionReciclaje.createMany({ data: evaluation.decisions.map((decision) => ({ ejecucionId: executionId, registroOriginalId: decision.originalRecordId, gestionGanadoraId: decision.winningManagementId, estado: decision.decision, motivo: decision.reason })) });

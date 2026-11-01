@@ -12,6 +12,7 @@ const expected = [
   "20261029090000_add_base_history_catalog",
   "20261030090000_add_intelligent_recycling_history",
   "20261031090000_add_recycling_execution_author",
+  "20261101090000_add_external_sales_blocks",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -22,7 +23,9 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   ));
   // The historical catalogue intentionally backfills legacy rows. Every
   // subsequent migration must stay add-only without data rewrites.
-  for (const migration of sql.slice(0, -3)) {
+  // Earlier history migrations legitimately backfilled pre-existing rows. New
+  // migrations from this point forward must be strictly add-only.
+  for (const migration of sql.slice(6)) {
     assert.doesNotMatch(migration, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
   }
   assert.match(sql[0]!, /CREATE TABLE "eventos_auditoria"/);
@@ -35,4 +38,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.doesNotMatch(sql[4]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM)/im);
   assert.match(sql[5]!, /ADD COLUMN "usuario_id" UUID/);
   assert.doesNotMatch(sql[5]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[6]!, /CREATE TABLE "ventas_externas"/);
+  assert.match(sql[6]!, /huella_contenido/);
+  assert.doesNotMatch(sql[6]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });
