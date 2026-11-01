@@ -236,7 +236,10 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     void load(files);
   }
 
-  const selectedCount = useMemo(() => analysis?.winners.filter((record) => record.bucket !== "bloqueado" && selectedTipifications.has(normalizeRecyclingTipification(record.tipification))).length ?? 0, [analysis, selectedTipifications]);
+  const candidateCount = useMemo(() => analysis?.winners.filter((record) => record.bucket !== "bloqueado" && selectedTipifications.has(normalizeRecyclingTipification(record.tipification))).length ?? 0, [analysis, selectedTipifications]);
+  // The existing primary control starts server reconciliation. It must remain
+  // available for invalid-only files so their incidents can be reviewed.
+  const selectedCount = candidateCount || (analysis?.conciliationRows.length ? 1 : 0);
   const exceptions = useMemo(() => {
     if (!analysis) return [];
     return analysis.winners.filter((record) => record.reviewReason).filter((record) => {
@@ -293,6 +296,10 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     if (!analysis || isEvaluating) return;
     if (!preparedExecutionId || !conciliation) {
       await prepareConciliation();
+      return;
+    }
+    if (candidateCount === 0 || conciliation.uniqueFoundMobiles === 0) {
+      setMessage("La conciliación no contiene candidatos elegibles; se conservaron las incidencias y no se generará una base reciclada.");
       return;
     }
     setIsEvaluating(true);
