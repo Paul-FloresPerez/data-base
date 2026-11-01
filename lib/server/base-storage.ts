@@ -8,6 +8,7 @@ import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
 import { confirmedExternalSales } from "@/lib/server/sales-storage";
+import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -150,12 +151,11 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
       const mobile = derived.get(row)?.normalizedMobile;
       return mobile ? [mobile] : [];
     }));
-    const commerciallyBlocked = await confirmedExternalSales(mobilesToDistribute);
-    if (commerciallyBlocked.size) {
-      throw new Error("No se puede distribuir un móvil con una venta comercial confirmada.");
-    }
     const byRow = new Map(savedRecords.map((record) => [record.numeroFilaOriginal, record.id]));
     await prisma.$transaction(async (transaction) => {
+      await lockCommercialMobiles(transaction, mobilesToDistribute);
+      const sales = await transaction.ventaExterna.findMany({ where: { movilNormalizado: { in: [...new Set(mobilesToDistribute)] }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } });
+      if (sales.length) throw new Error("No se puede distribuir un móvil con una venta comercial confirmada.");
       await transaction.lote.deleteMany({ where: { baseId } });
       for (const lot of lots) {
         const created = await transaction.lote.create({ data: { baseId, baseOriginalId: base.baseOriginalId ?? baseId, campana: lot.campaign, numeroLote: lot.number, cantidadRegistros: lot.sourceRows.length } });

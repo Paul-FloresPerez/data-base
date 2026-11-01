@@ -24,6 +24,7 @@
     "db:exercise-sozar-first-real-concurrency": "node --conditions=react-server --experimental-strip-types scripts/exercise-sozar-first-real-concurrency.ts",
     "db:exercise-intelligent-recycling-confirmation": "node --conditions=react-server --experimental-strip-types scripts/exercise-intelligent-recycling-confirmation.ts",
     "db:exercise-external-sales-test": "node --conditions=react-server --experimental-strip-types scripts/exercise-external-sales-test.ts",
+    "db:exercise-complete-base-save-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-complete-base-save-test.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

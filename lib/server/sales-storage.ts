@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import type { SalesEventPreview } from "@/lib/sales/sales-import";
 import { prisma } from "@/lib/server/prisma";
+import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 
 type SalesImportInput = {
   importId: string;
@@ -53,7 +54,8 @@ export async function importExternalSales(input: SalesImportInput) {
     alreadyBlocked: validMobiles.filter((mobile) => alreadyBlocked.has(mobile)).length,
   };
   try {
-    await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
+      await lockCommercialMobiles(tx, validMobiles);
       await tx.importacionVentas.create({
       data: {
         importacionId: input.importId,
