@@ -2,13 +2,10 @@
 
 import { useMemo, useState } from "react";
 
-import type { CampaignFilters, CampaignOperatorId, CampaignReport } from "@/lib/campaigns/campaign-engine";
+import type { CampaignOperatorId, CampaignReport } from "@/lib/campaigns/campaign-engine";
 import {
   buildExportPlan,
-  createCampaignZip,
   createCompleteWorkbook,
-  createSingleCampaignZip,
-  createXlsxWorkbook,
   projectExportPlan,
   workbookToArray,
 } from "@/lib/export/xlsx-export";
@@ -25,7 +22,6 @@ interface ExportWorkspaceProps {
   settings: DistributionSettings;
   provenances?: RecordProvenance[];
   batch: BatchSummary;
-  filters: CampaignFilters;
 }
 
 interface ExportStatus {
@@ -43,7 +39,7 @@ function triggerDownload(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
-export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExportCompleted, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
+export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted, output, report, settings, provenances = [] }: ExportWorkspaceProps) {
   const provenanceLabel = provenances.includes("MOCK")
     ? "MOCK · DATOS SIMULADOS"
     : provenances.includes("CRM")
@@ -68,12 +64,16 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
   const canExportCampaigns = isOutputConsistent && settings.selectedCampaigns.length > 0 && plan.totalEligible > 0;
   const totalBatches = plan.campaigns.reduce((total, campaign) => total + campaign.batches.length, 0);
 
-  function recordExport(type: string, quantity: number, campaign: "YOIGO" | "VODAFONE" | null, lotNumber: number | null) {
-    const operationId = crypto.randomUUID();
-    const payload = { operationId, baseId: batch.id, campaign, lotId: null, lotNumber, type, quantity, filters, metadata: { baseKind: batch.kind, baseVersion: batch.createdAt, format: batch.kind === "RECICLADA" ? "CRM_24" : "BASE_ORIGINAL" } };
-    void fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "GENERADO" }) })
-      .then((response) => response.ok ? fetch("/api/auditoria/exportaciones", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...payload, state: "DESCARGA_INICIADA" }) }) : null)
-      .catch(() => undefined);
+  async function downloadConfirmedCommercial(campaign?: string, lotNumber?: number) {
+    const query = new URLSearchParams();
+    if (campaign) query.set("campaign", campaign);
+    if (lotNumber) query.set("lot", String(lotNumber));
+    const response = await fetch(`/api/exportaciones/comerciales/${batch.id}?${query.toString()}`);
+    if (!response.ok) throw new Error("La distribución confirmada ya no está disponible.");
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const fileName = /filename=\"([^\"]+)\"/.exec(disposition)?.[1] ?? "LOTES_COMERCIALES_CONFIRMADOS.zip";
+    triggerDownload(blob, fileName);
   }
 
   async function downloadCompleteBase() {
@@ -93,7 +93,6 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
         new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
         "BASE_COMPLETA_ENRIQUECIDA.xlsx",
       );
-      recordExport("BASE_MAESTRA", masterOutput.rows.length, null, null);
       onExportCompleted();
       setStatus({ message: "Base completa preparada para descargar.", tone: "success" });
     } catch {
@@ -110,22 +109,9 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     setStatus({ message: "Generando ZIP local…", progress: `0 de ${totalBatches} lotes`, tone: "progress" });
 
     try {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-      const [xlsx, jszip] = await Promise.all([import("xlsx"), import("jszip")]);
-      const zip = new jszip.default();
-      const zipBlob = await createCampaignZip(xlsx, zip, masterOutput, plan, {
-        baseId: batch.id,
-        baseName: batch.displayName ?? batch.fileName,
-        baseOriginalCode: batch.originalBaseCode ?? (batch.kind === "ORIGINAL" ? batch.code : null) ?? batch.originalBaseId ?? batch.id,
-        filters,
-        generatedAt: new Date().toISOString(),
-      }, (completed, total) => {
-        setStatus({ message: "Generando ZIP local…", progress: `${completed} de ${total} lotes`, tone: "progress" });
-      }, campaignOutput);
-      triggerDownload(zipBlob, "CAMPANAS_YOIGO_VODAFONE.zip");
-      recordExport("ZIP_CAMPANAS", plan.totalEligible, null, null);
+      await downloadConfirmedCommercial();
       onExportCompleted();
-      setStatus({ message: "ZIP preparado para descargar.", tone: "success" });
+      setStatus({ message: "ZIP confirmado preparado para descargar.", tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el ZIP de campañas.", tone: "error" });
     }
@@ -139,18 +125,9 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     }
     setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `0 de ${campaign.batches.length} lotes`, tone: "progress" });
     try {
-      const [xlsx, jszip] = await Promise.all([import("xlsx"), import("jszip")]);
-      const zipBlob = await createSingleCampaignZip(xlsx, new jszip.default(), campaignOutput, campaign, {
-        baseId: batch.id,
-        baseName: batch.displayName ?? batch.fileName,
-        baseOriginalCode: batch.originalBaseCode ?? (batch.kind === "ORIGINAL" ? batch.code : null) ?? batch.originalBaseId ?? batch.id,
-        filters,
-        generatedAt: new Date().toISOString(),
-      }, (completed, total) => setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `${completed} de ${total} lotes`, tone: "progress" }));
-      triggerDownload(zipBlob, `${campaign.folderName}_LOTES.xlsx.zip`);
-      recordExport("ZIP_CAMPANA", campaign.eligibleCount, campaign.folderName as "YOIGO" | "VODAFONE", null);
+      await downloadConfirmedCommercial(campaign.folderName);
       onExportCompleted();
-      setStatus({ message: `ZIP de ${campaign.folderName} preparado para descargar.`, tone: "success" });
+      setStatus({ message: `ZIP confirmado de ${campaign.folderName} preparado para descargar.`, tone: "success" });
     } catch {
       setStatus({ message: `No se pudo generar el ZIP de ${campaign.folderName}.`, tone: "error" });
     }
@@ -168,17 +145,9 @@ export function ExportWorkspace({ batch, filters, masterOutput, onBack, onExport
     setStatus({ message: `Preparando ${campaign.folderName}/${batch.fileName}…`, tone: "progress" });
 
     try {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-      const xlsx = await import("xlsx");
-      const workbook = createXlsxWorkbook(xlsx, campaignOutput.columns, batch.rows, campaign.folderName);
-      const bytes = workbookToArray(xlsx, workbook);
-      triggerDownload(
-        new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
-        `${campaign.folderName}_${batch.fileName}`,
-      );
-      recordExport("LOTE_XLSX", batch.rows.length, campaign.folderName as "YOIGO" | "VODAFONE", batch.index);
+      await downloadConfirmedCommercial(campaign.folderName, batch.index);
       onExportCompleted();
-      setStatus({ message: `${campaign.folderName}/${batch.fileName} preparado para descargar.`, tone: "success" });
+      setStatus({ message: `${campaign.folderName}/${batch.fileName} confirmado preparado para descargar.`, tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el lote seleccionado.", tone: "error" });
     }

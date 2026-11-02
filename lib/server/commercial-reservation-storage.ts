@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma, type Campana } from "@/generated/prisma/client";
 import { prisma } from "@/lib/server/prisma";
+import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 
 type Transaction = Prisma.TransactionClient;
 
@@ -77,6 +78,9 @@ export async function createCommercialReservations(
 /** Releases a hold explicitly; the historical reservation is never deleted. */
 export async function releaseCommercialReservation(input: { id: string; userId: string; operationId: string }) {
   return prisma.$transaction(async (transaction) => {
+    const initial = await transaction.reservaComercial.findUnique({ where: { id: input.id } });
+    if (!initial) return false;
+    await lockCommercialMobiles(transaction, [initial.movilNormalizado]);
     const reservation = await transaction.reservaComercial.findUnique({ where: { id: input.id } });
     if (!reservation) return false;
     if (reservation.estado === "LIBERADA") return reservation.operacionLiberacionId === input.operationId;

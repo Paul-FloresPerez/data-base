@@ -803,7 +803,7 @@ export function ExcelWorkspace() {
     }
 
     if (!batch) return null;
-    return <ExportWorkspace batch={summarizeBatch(batch)} filters={campaignFilters} masterOutput={masterOutput ?? enrichmentOutput} output={enrichmentOutput} report={campaignReport} settings={batch.distribution} provenances={Object.values(batch.provenanceBySourceRow)} onBack={() => navigate("distribucion")} onExportCompleted={() => setBatch((currentBatch) => currentBatch?.id === batch.id ? { ...currentBatch, exportCompletedAt: new Date().toISOString() } : currentBatch)} />;
+    return <ExportWorkspace batch={summarizeBatch(batch)} masterOutput={masterOutput ?? enrichmentOutput} output={enrichmentOutput} report={campaignReport} settings={batch.distribution} provenances={Object.values(batch.provenanceBySourceRow)} onBack={() => navigate("distribucion")} onExportCompleted={() => setBatch((currentBatch) => currentBatch?.id === batch.id ? { ...currentBatch, exportCompletedAt: new Date().toISOString() } : currentBatch)} />;
   }
 
   let moduleContent: ReactNode;

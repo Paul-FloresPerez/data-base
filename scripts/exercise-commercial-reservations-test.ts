@@ -13,11 +13,13 @@ process.env.DATABASE_URL_UNPOOLED = testUrl;
 const { completeBaseSave } = await import("../lib/server/base-storage.ts");
 const { importExternalSales } = await import("../lib/server/sales-storage.ts");
 const { releaseCommercialReservation } = await import("../lib/server/commercial-reservation-storage.ts");
+const { prepareCommercialExport } = await import("../lib/server/commercial-export-storage.ts");
 const prisma = new PrismaClient({ adapter: new PrismaNeon({ connectionString: testUrl }) });
 const testRunId = randomUUID();
 const userId = randomUUID();
 const baseIds = Array.from({ length: 7 }, () => randomUUID());
 const saleImportId = randomUUID();
+const postReservationSaleImportId = randomUUID();
 
 function metadata(revision: string) {
   return {
@@ -53,6 +55,14 @@ try {
   if (!await completeBaseSave(baseIds[0]!, revisionA, lot("YOIGO"), userId)) throw new Error("Initial distribution did not persist.");
   const initialReservation = await prisma.reservaComercial.findFirstOrThrow({ where: { baseId: baseIds[0]!, movilNormalizado: sharedMobile, estado: "ACTIVA" } });
   if (!initialReservation.loteId || initialReservation.campana !== "YOIGO" || initialReservation.usuarioId !== userId) throw new Error("Reservation traceability is incomplete.");
+  const firstExport = await prepareCommercialExport({ baseId: baseIds[0]!, userId, campaign: "YOIGO", lotNumber: 1 });
+  const retriedExport = await prepareCommercialExport({ baseId: baseIds[0]!, userId, campaign: "YOIGO", lotNumber: 1 });
+  if (firstExport.lots.length !== 1 || retriedExport.lots[0]?.rows.length !== 1 || await prisma.reservaComercial.count({ where: { baseId: baseIds[0]!, estado: "ACTIVA" } }) !== 1) throw new Error("Confirmed lot download was not idempotent.");
+  const revisionUnconfirmed = randomUUID();
+  await createBase(baseIds[6]!, mobile("unconfirmed"), "Vodafone", revisionUnconfirmed);
+  let beforeConfirmationRejected = false;
+  try { await prepareCommercialExport({ baseId: baseIds[6]!, userId }); } catch { beforeConfirmationRejected = true; }
+  if (!beforeConfirmationRejected) throw new Error("Export bypassed lot confirmation.");
 
   const revisionB = randomUUID();
   await createBase(baseIds[1]!, sharedMobile, "Vodafone", revisionB);
@@ -72,8 +82,15 @@ try {
   if (!await releaseCommercialReservation({ id: initialReservation.id, userId, operationId: releaseOperation })) throw new Error("Release retry was not idempotent.");
   const released = await prisma.reservaComercial.findUniqueOrThrow({ where: { id: initialReservation.id } });
   if (released.estado !== "LIBERADA" || !released.liberadaEn) throw new Error("Released reservation lost historical traceability.");
+  let releasedDownloadRejected = false;
+  try { await prepareCommercialExport({ baseId: baseIds[0]!, userId }); } catch { releasedDownloadRejected = true; }
+  if (!releasedDownloadRejected) throw new Error("A released reservation allowed a new commercial download.");
   if (!await completeBaseSave(baseIds[1]!, revisionB, lot("YOIGO"), userId)) throw new Error("A released mobile could not be re-evaluated.");
   if (await completeBaseSave(baseIds[1]!, revisionB, lot("YOIGO"), userId)) throw new Error("Retry duplicated an already confirmed reservation.");
+  await importExternalSales({ importId: postReservationSaleImportId, userId, fileName: `synthetic-post-reservation-sale-${testRunId}.xlsx`, declaredPeriod: null, sourceFingerprint: fingerprint(`${testRunId}post-reservation-sale`), events: [{ sourceRow: 2, mobile: sharedMobile, saleStatus: "CONFIRMADA", originalStatus: "CONFIRMADA", reason: "VALIDA", soldAt: null, advisor: null, campaign: "YOIGO" }] });
+  let soldDownloadRejected = false;
+  try { await prepareCommercialExport({ baseId: baseIds[1]!, userId }); } catch { soldDownloadRejected = true; }
+  if (!soldDownloadRejected) throw new Error("A confirmed sale allowed a commercial download.");
 
   const saleMobile = mobile("sale");
   const revisionSale = randomUUID();
@@ -100,12 +117,12 @@ try {
     throw new Error("Concurrent requests created inconsistent active reservations.");
   }
 
-  console.log(JSON.stringify({ target: "test", testRunId, initialReserved: true, duplicateRejected, crossCampaignRejected, releaseIdempotent: true, reReservedAfterRelease: true, saleRejected, concurrentSingleActiveReservation: true }));
+  console.log(JSON.stringify({ target: "test", testRunId, initialReserved: true, confirmedDownload: true, beforeConfirmationRejected, duplicateRejected, crossCampaignRejected, releaseIdempotent: true, releasedDownloadRejected, reReservedAfterRelease: true, soldDownloadRejected, saleRejected, concurrentSingleActiveReservation: true }));
 } finally {
   const auditIds = (await prisma.eventoAuditoria.findMany({ where: { baseId: { in: baseIds }, usuarioId: userId }, select: { id: true } })).map((event) => event.id);
   if (auditIds.length) await prisma.eventoAuditoria.deleteMany({ where: { id: { in: auditIds } } });
   await prisma.reservaComercial.deleteMany({ where: { baseId: { in: baseIds } } });
-  const importIds = (await prisma.importacionVentas.findMany({ where: { importacionId: saleImportId }, select: { id: true } })).map((entry) => entry.id);
+  const importIds = (await prisma.importacionVentas.findMany({ where: { importacionId: { in: [saleImportId, postReservationSaleImportId] } }, select: { id: true } })).map((entry) => entry.id);
   if (importIds.length) await prisma.ventaExterna.deleteMany({ where: { importacionId: { in: importIds } } });
   if (importIds.length) await prisma.importacionVentas.deleteMany({ where: { id: { in: importIds } } });
   await prisma.base.deleteMany({ where: { id: { in: baseIds } } });
