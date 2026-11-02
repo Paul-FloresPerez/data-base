@@ -3,7 +3,7 @@ import { listAudit } from "@/lib/server/audit-storage";
 import { uuidPattern } from "@/lib/server/request-validation";
 import { requireAdminApi } from "@/lib/server/require-admin";
 
-const actions = new Set(["BASE_CREADA", "BASE_RECICLADA", "ENRIQUECIMIENTO_APLICADO", "CONFIGURACION_CAMPANA", "LOTES_CREADOS", "EXPORTACION_GENERADA", "DESCARGA_INICIADA", "ENTREGA_CONFIRMADA"]);
+const actions = new Set(["BASE_CREADA", "BASE_RECICLADA", "ENRIQUECIMIENTO_APLICADO", "CONFIGURACION_CAMPANA", "LOTES_CREADOS", "EXPORTACION_GENERADA", "DESCARGA_INICIADA", "ENTREGA_CONFIRMADA", "RESERVAS_CREADAS", "RESERVA_LIBERADA"]);
 
 export async function GET(request: Request) {
   if (!await requireAdminApi()) return Response.json({ error: "No autorizado" }, { status: 401 });

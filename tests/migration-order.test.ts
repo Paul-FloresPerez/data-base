@@ -13,6 +13,7 @@ const expected = [
   "20261030090000_add_intelligent_recycling_history",
   "20261031090000_add_recycling_execution_author",
   "20261101090000_add_external_sales_blocks",
+  "20261101110000_add_commercial_reservations",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -41,4 +42,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[6]!, /CREATE TABLE "ventas_externas"/);
   assert.match(sql[6]!, /huella_contenido/);
   assert.doesNotMatch(sql[6]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[7]!, /CREATE TABLE "reservas_comerciales"/);
+  assert.match(sql[7]!, /WHERE "estado" = 'ACTIVA'/);
+  assert.doesNotMatch(sql[7]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 type AuditEvent = { id: string; createdAt: string; action: string; user: string; baseId: string; baseName: string; campaign: string | null; lotId: string | null; quantity: number | null; metadata: unknown };
 type ExportRecord = { id: string; createdAt: string; campaign: string | null; lotNumber: number | null; type: string; state: "GENERADO" | "DESCARGA_INICIADA" | "ENTREGADO_CONFIRMADO"; quantity: number; recipient: string | null; baseName: string };
-const labels: Record<string, string> = { BASE_CREADA: "Base creada", BASE_RECICLADA: "Base reciclada", ENRIQUECIMIENTO_APLICADO: "Enriquecimiento", CONFIGURACION_CAMPANA: "Configuración de campaña", LOTES_CREADOS: "Lotes creados", EXPORTACION_GENERADA: "Exportación generada", DESCARGA_INICIADA: "Descarga iniciada", ENTREGA_CONFIRMADA: "Entrega confirmada" };
+const labels: Record<string, string> = { BASE_CREADA: "Base creada", BASE_RECICLADA: "Base reciclada", ENRIQUECIMIENTO_APLICADO: "Enriquecimiento", CONFIGURACION_CAMPANA: "Configuración de campaña", LOTES_CREADOS: "Lotes creados", EXPORTACION_GENERADA: "Exportación generada", DESCARGA_INICIADA: "Descarga iniciada", ENTREGA_CONFIRMADA: "Entrega confirmada", RESERVAS_CREADAS: "Reservas creadas", RESERVA_LIBERADA: "Reserva liberada" };
 
 export function AuditHistoryPanel() {
   const [events, setEvents] = useState<AuditEvent[]>([]);

@@ -37,6 +37,8 @@ enum AccionAuditoria {
   EXPORTACION_GENERADA
   DESCARGA_INICIADA
   ENTREGA_CONFIRMADA
+  RESERVAS_CREADAS
+  RESERVA_LIBERADA
 }
 
 enum EstadoExportacion {
@@ -74,6 +76,11 @@ enum EstadoVentaExterna {
   CORREGIDA
 }
 
+enum EstadoReservaComercial {
+  ACTIVA
+  LIBERADA
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
   codigo              String     @unique
@@ -102,6 +109,7 @@ model Base {
   exportaciones       RegistroExportacion[]
   aprobacionesHlr     AprobacionHlr[]
   destinosHlr         ConsultaHlrRegistro[]
+  reservasComerciales ReservaComercial[]
 
   @@index([estado])
   @@index([tipo, fechaRecepcion])
@@ -145,6 +153,7 @@ model Lote {
   base                Base           @relation("LoteBase", fields: [baseId], references: [id], onDelete: Cascade)
   baseOriginal        Base?          @relation("LoteBaseOriginal", fields: [baseOriginalId], references: [id], onDelete: Restrict)
   registros           LoteRegistro[]
+  reservasComerciales ReservaComercial[]
 
   @@unique([baseId, campana, numeroLote])
   @@index([baseId])
@@ -253,6 +262,33 @@ model LoteRegistro {
   @@map("lote_registros")
 }
 
+/// A durable commercial hold. Historical releases remain append-only records.
+model ReservaComercial {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  movilNormalizado      String                 @map("movil_normalizado")
+  baseId                String                 @map("base_id") @db.Uuid
+  loteId                String                 @map("lote_id") @db.Uuid
+  campana               Campana
+  usuarioId             String                 @map("usuario_id") @db.Uuid
+  asesor                String?
+  operacionId           String                 @unique @map("operacion_id")
+  estado                EstadoReservaComercial @default(ACTIVA)
+  creadoEn              DateTime               @default(now()) @map("creado_en")
+  liberadaEn            DateTime?              @map("liberada_en")
+  liberadaPorUsuarioId  String?                @map("liberada_por_usuario_id") @db.Uuid
+  operacionLiberacionId String?                @unique @map("operacion_liberacion_id")
+  metadatos             Json
+  base                  Base                   @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  lote                  Lote                   @relation(fields: [loteId], references: [id], onDelete: Restrict)
+  usuario               Usuario                @relation("ReservaCreador", fields: [usuarioId], references: [id], onDelete: Restrict)
+  liberadaPor           Usuario?               @relation("ReservaLiberador", fields: [liberadaPorUsuarioId], references: [id], onDelete: Restrict)
+
+  @@index([movilNormalizado, estado])
+  @@index([baseId, creadoEn])
+  @@index([loteId])
+  @@map("reservas_comerciales")
+}
+
 model Usuario {
   id           String   @id @default(uuid()) @db.Uuid
   username     String   @unique
@@ -264,6 +300,8 @@ model Usuario {
   aprobacionesHlr AprobacionHlr[]
   ejecucionesReciclaje EjecucionReciclaje[]
   importacionesVentas ImportacionVentas[]
+  reservasCreadas ReservaComercial[] @relation("ReservaCreador")
+  reservasLiberadas ReservaComercial[] @relation("ReservaLiberador")
 
   @@map("usuarios")
 }

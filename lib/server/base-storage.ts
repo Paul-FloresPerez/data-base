@@ -9,6 +9,7 @@ import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { assertCommercialLotsIntegrity, assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
 import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
+import { createCommercialReservations } from "@/lib/server/commercial-reservation-storage";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -45,6 +46,7 @@ export async function beginBaseSave(input: SaveStartPayload) {
     const receivedAt = receiptDate(input.receivedAt);
     await prisma.$transaction(async (transaction) => {
       if (existing) {
+        if (old?.completed) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
         await transaction.lote.deleteMany({ where: { baseId: input.id } });
         // A completed base is immutable at the source-row level. Upserts in
         // saveRecordChunk enrich those same records without erasing their
@@ -165,10 +167,18 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
       const sales = await transaction.ventaExterna.findMany({ where: { movilNormalizado: { in: [...new Set(mobilesToDistribute)] }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } });
       if (sales.length) throw new Error("No se puede distribuir un móvil con una venta comercial confirmada.");
       await transaction.lote.deleteMany({ where: { baseId } });
+      const reservations: { baseId: string; loteId: string; campaign: "YOIGO" | "VODAFONE"; mobile: string; operationId: string }[] = [];
       for (const lot of lots) {
         const created = await transaction.lote.create({ data: { baseId, baseOriginalId: base.baseOriginalId ?? baseId, campana: lot.campaign, numeroLote: lot.number, cantidadRegistros: lot.sourceRows.length } });
         if (lot.sourceRows.length) await transaction.loteRegistro.createMany({ data: lot.sourceRows.map((sourceRow) => ({ loteId: created.id, registroId: byRow.get(sourceRow)! })) });
+        for (const sourceRow of lot.sourceRows) {
+          const mobile = derived.get(sourceRow)?.normalizedMobile;
+          const recordId = byRow.get(sourceRow);
+          if (!mobile || !recordId) throw new Error("No se pudo identificar el móvil del lote para reservarlo.");
+          reservations.push({ baseId, loteId: created.id, campaign: lot.campaign, mobile, operationId: `reservation:${baseId}:${recordId}` });
+        }
       }
+      await createCommercialReservations(transaction, { userId, matrixVersion: commercialMatrixSnapshot().version, reservations });
       const historicalImports = baseMetadata.historicalResultImports
         ?? (baseMetadata.historicalResultImport ? [baseMetadata.historicalResultImport] : []);
       for (const importedFile of historicalImports) {
