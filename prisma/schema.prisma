@@ -81,6 +81,24 @@ enum EstadoReservaComercial {
   LIBERADA
 }
 
+/// RECUPERABLE denotes a lease expiry or a retryable worker failure.
+enum EstadoTrabajoProcesamiento {
+  PENDIENTE
+  EN_PROCESO
+  RECUPERABLE
+  COMPLETADO
+  FALLIDO
+  CANCELADO
+}
+
+/// The durable work core is generic; it does not enable these engines yet.
+enum TipoTrabajoProcesamiento {
+  IMPORTACION
+  CONCILIACION
+  RECICLAJE
+  EXPORTACION
+}
+
 model Base {
   id                  String     @id @default(uuid()) @db.Uuid
   codigo              String     @unique
@@ -110,6 +128,7 @@ model Base {
   aprobacionesHlr     AprobacionHlr[]
   destinosHlr         ConsultaHlrRegistro[]
   reservasComerciales ReservaComercial[]
+  trabajosProcesamiento TrabajoProcesamiento[]
 
   @@index([estado])
   @@index([tipo, fechaRecepcion])
@@ -289,6 +308,82 @@ model ReservaComercial {
   @@map("reservas_comerciales")
 }
 
+/// Durable orchestration state. Progress is derived solely from confirmed blocks.
+model TrabajoProcesamiento {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  operacionId        String                     @unique @map("operacion_id")
+  tipo               TipoTrabajoProcesamiento
+  estado             EstadoTrabajoProcesamiento @default(PENDIENTE)
+  usuarioId          String                     @map("usuario_id") @db.Uuid
+  baseId             String?                    @map("base_id") @db.Uuid
+  totalBloques       Int                        @default(0) @map("total_bloques")
+  bloquesCompletados Int                        @default(0) @map("bloques_completados")
+  bloquesFallidos    Int                        @default(0) @map("bloques_fallidos")
+  progresoPorcentaje Int                        @default(0) @map("progreso_porcentaje")
+  maxIntentos        Int                        @default(3) @map("max_intentos")
+  checkpoint         Json?
+  metadatos          Json
+  codigoError        String?                    @map("codigo_error")
+  mensajeError       String?                    @map("mensaje_error")
+  creadoEn           DateTime                   @default(now()) @map("creado_en")
+  iniciadoEn         DateTime?                  @map("iniciado_en")
+  finalizadoEn       DateTime?                  @map("finalizado_en")
+  actualizadoEn      DateTime                   @updatedAt @map("actualizado_en")
+  usuario            Usuario                    @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  base               Base?                      @relation(fields: [baseId], references: [id], onDelete: Restrict)
+  bloques            BloqueTrabajoProcesamiento[]
+  archivos           ArchivoProcesamiento[]
+
+  @@index([usuarioId, creadoEn])
+  @@index([baseId, creadoEn])
+  @@index([estado, creadoEn])
+  @@map("trabajos_procesamiento")
+}
+
+/// A finite lease makes work recoverable after a worker interruption.
+model BloqueTrabajoProcesamiento {
+  id            String                     @id @default(uuid()) @db.Uuid
+  trabajoId     String                     @map("trabajo_id") @db.Uuid
+  numeroBloque  Int                        @map("numero_bloque")
+  estado        EstadoTrabajoProcesamiento @default(PENDIENTE)
+  intentos      Int                        @default(0)
+  workerId      String?                    @map("worker_id")
+  reclamadoEn   DateTime?                  @map("reclamado_en")
+  leaseHasta    DateTime?                  @map("lease_hasta")
+  checkpoint    Json?
+  resumen       Json?
+  codigoError   String?                    @map("codigo_error")
+  mensajeError  String?                    @map("mensaje_error")
+  completadoEn  DateTime?                  @map("completado_en")
+  creadoEn      DateTime                   @default(now()) @map("creado_en")
+  actualizadoEn DateTime                   @updatedAt @map("actualizado_en")
+  trabajo       TrabajoProcesamiento       @relation(fields: [trabajoId], references: [id], onDelete: Restrict)
+
+  @@unique([trabajoId, numeroBloque])
+  @@index([trabajoId, estado, numeroBloque])
+  @@index([estado, leaseHasta])
+  @@map("bloques_trabajos_procesamiento")
+}
+
+/// Metadata/reference only; future private storage owns the original binary.
+model ArchivoProcesamiento {
+  id                String                 @id @default(uuid()) @db.Uuid
+  trabajoId         String                 @map("trabajo_id") @db.Uuid
+  nombreOriginal    String                 @map("nombre_original")
+  tipoContenido     String?                @map("tipo_contenido")
+  tamanoBytes       Int                    @map("tamano_bytes")
+  huellaContenido   String                 @map("huella_contenido")
+  referenciaPrivada String                 @map("referencia_privada")
+  metadatos         Json
+  creadoEn          DateTime               @default(now()) @map("creado_en")
+  trabajo           TrabajoProcesamiento   @relation(fields: [trabajoId], references: [id], onDelete: Restrict)
+
+  @@unique([trabajoId, huellaContenido])
+  @@unique([referenciaPrivada])
+  @@index([trabajoId, creadoEn])
+  @@map("archivos_procesamiento")
+}
+
 model Usuario {
   id           String   @id @default(uuid()) @db.Uuid
   username     String   @unique
@@ -302,6 +397,7 @@ model Usuario {
   importacionesVentas ImportacionVentas[]
   reservasCreadas ReservaComercial[] @relation("ReservaCreador")
   reservasLiberadas ReservaComercial[] @relation("ReservaLiberador")
+  trabajosProcesamiento TrabajoProcesamiento[]
 
   @@map("usuarios")
 }
