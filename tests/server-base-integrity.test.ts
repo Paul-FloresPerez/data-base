@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity, deriveRecordsIntegrity } from "../lib/server/base-integrity.ts";
+import { assertCommercialLotsIntegrity, assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity, deriveRecordsIntegrity } from "../lib/server/base-integrity.ts";
 import type { SavedLot, StoredRecord } from "../lib/persistence/workspace-persistence.ts";
 
 const mapping = { movil: 0, nombre: 1, enriched: {} };
@@ -62,6 +62,14 @@ test("rechaza filas repetidas y lotes fuera de la base, duplicados o de más de 
   assert.throws(() => assertLotsIntegrity([{ ...validLot, sourceRows: [2, 2] }], derived), /repetirse/);
   assert.throws(() => assertLotsIntegrity([{ ...validLot, sourceRows: [99] }], derived), /ajenos/);
   assert.throws(() => assertLotsIntegrity([{ ...validLot, sourceRows: Array.from({ length: 101 }, () => 2) }], derived), /1 y 100/);
+});
+
+test("el servidor rechaza lotes manipulados fuera de la matriz y datos MOCK", () => {
+  const yoigoLot: SavedLot = { campaign: "YOIGO", number: 1, sourceRows: [2] };
+  assert.doesNotThrow(() => assertCommercialLotsIntegrity(yoigoLot ? [yoigoLot] : [], [{ sourceRow: 2, operadorActual: "Vodafone", provenance: "API_REAL" }]));
+  assert.throws(() => assertCommercialLotsIntegrity([yoigoLot], [{ sourceRow: 2, operadorActual: "Orange", provenance: "API_REAL" }]), /matriz comercial/);
+  assert.throws(() => assertCommercialLotsIntegrity([yoigoLot], [{ sourceRow: 2, operadorActual: "Vodafone", provenance: "MOCK" }]), /matriz comercial/);
+  assert.throws(() => assertCommercialLotsIntegrity([yoigoLot], [{ sourceRow: 2, operadorActual: "Desconocido", provenance: "API_REAL" }]), /matriz comercial/);
 });
 
 test("valida 10.000 registros de una base sin convertir móviles inválidos en elegibles", () => {

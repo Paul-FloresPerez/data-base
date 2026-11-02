@@ -24,6 +24,7 @@ interface CampaignEngineProps {
   onFiltersChange: (nextFilters: CampaignFilters) => void;
   onSelectedCampaignsChange: (campaigns: CampaignOperatorId[]) => void;
   output: EnrichmentOutput;
+  provenanceBySourceRow: Readonly<Record<number, string>>;
   selectedCampaigns: CampaignOperatorId[];
   batch: BatchSummary;
 }
@@ -53,16 +54,16 @@ function CampaignSummaryCard({
       <p className="mt-1 text-xs text-slate-500">{campaign.totalCleanRecords} tras filtros · {filteredOut} excluidos por filtros</p>
       <dl className="mt-4 grid grid-cols-3 divide-x divide-slate-100 text-center text-xs">
         <div className="px-1"><dt className="text-slate-500">Elegibles</dt><dd className="mt-1 font-semibold text-emerald-700">{campaign.eligible.length}</dd></div>
-        <div className="px-1"><dt className="text-slate-500">Mismo operador</dt><dd className="mt-1 font-semibold text-rose-700">{campaign.excludedByOperator.length}</dd></div>
-        <div className="px-1"><dt className="text-slate-500">Sin clasificar</dt><dd className="mt-1 font-semibold text-amber-700">{campaign.unclassified.length}</dd></div>
+        <div className="px-1"><dt className="text-slate-500">No elegibles</dt><dd className="mt-1 font-semibold text-rose-700">{campaign.excludedByOperator.length}</dd></div>
+        <div className="px-1"><dt className="text-slate-500">En revisión</dt><dd className="mt-1 font-semibold text-amber-700">{campaign.unclassified.length}</dd></div>
       </dl>
     </button>
   );
 }
 
-export function CampaignEngine({ batch, filters, onBack, onContinue, onFiltersChange, onSelectedCampaignsChange, output, selectedCampaigns }: CampaignEngineProps) {
+export function CampaignEngine({ batch, filters, onBack, onContinue, onFiltersChange, onSelectedCampaignsChange, output, provenanceBySourceRow, selectedCampaigns }: CampaignEngineProps) {
   const [activeCampaignId, setActiveCampaignId] = useState<CampaignOperatorId>(campaignOperators[0]);
-  const report = useMemo(() => buildCampaignReport(output, selectedCampaigns, filters), [filters, output, selectedCampaigns]);
+  const report = useMemo(() => buildCampaignReport({ ...output, provenanceBySourceRow }, selectedCampaigns, filters), [filters, output, provenanceBySourceRow, selectedCampaigns]);
   const activeCampaign = report.campaigns.find((campaign) => campaign.operator.id === activeCampaignId) ?? report.campaigns[0];
   const activeFilterReasons = Object.entries(report.filterSummary.reasonBreakdown).filter(([, count]) => count > 0);
   const detailColumns = report.columnMapping.permanencia === undefined ? [...report.columns, "Permanencia"] : [...report.columns];

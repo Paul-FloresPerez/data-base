@@ -1,5 +1,6 @@
 import "server-only";
 
+import { commercialEligibility } from "../campaigns/campaign-engine.ts";
 import { isNullLikeName, normalizeSpanishMobile, spanishMobileExclusionReason } from "../excel/cleaning.ts";
 import type { ColumnMapping, ExclusionReason } from "../excel/types.ts";
 import type { SavedLot, StoredRecord, StoredTipification } from "../persistence/workspace-persistence.ts";
@@ -112,5 +113,27 @@ export function assertLotsIntegrity(lots: readonly SavedLot[], derived: Readonly
       rows.add(sourceRow);
     }
     campaignRows.set(lot.campaign, rows);
+  }
+}
+
+/**
+ * Re-derives campaign eligibility from data persisted by the server. Client
+ * lots are only row references and cannot assert an operator or provenance.
+ */
+export function assertCommercialLotsIntegrity(
+  lots: readonly SavedLot[],
+  rows: readonly { sourceRow: number; operadorActual: string | null; provenance: string }[],
+): void {
+  const rowsBySource = new Map(rows.map((row) => [row.sourceRow, row]));
+  for (const lot of lots) {
+    const campaign = lot.campaign.toLocaleLowerCase("es-ES") as "yoigo" | "vodafone";
+    for (const sourceRow of lot.sourceRows) {
+      const row = rowsBySource.get(sourceRow);
+      if (!row) throw new Error("Un lote contiene registros sin datos comerciales persistidos.");
+      const eligibility = commercialEligibility(campaign, row.operadorActual ?? "", row.provenance);
+      if (eligibility !== "ELEGIBLE") {
+        throw new Error("Un lote contiene un móvil no elegible según la matriz comercial vigente.");
+      }
+    }
   }
 }

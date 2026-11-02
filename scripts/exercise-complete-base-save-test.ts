@@ -29,10 +29,10 @@ const mobileIndependentA = "632345678";
 const mobileIndependentB = "722345678";
 
 function metadata(revision: string) {
-  return { version: 1, completed: false, revision, originalFileName: `synthetic-${testRunId}.xlsx`, columns: ["Teléfono Movil"], columnMapping: { movil: 0, enriched: {} }, enrichmentColumns: null, enrichmentMode: "preserve", campaignFilters: {}, distribution: { batchSize: 100, selectedCampaigns: ["yoigo"] }, enrichmentSource: null, testRunId };
+  return { version: 1, completed: false, revision, originalFileName: `synthetic-${testRunId}.xlsx`, columns: ["Teléfono Movil"], columnMapping: { movil: 0, enriched: {} }, enrichmentColumns: ["Operador Actual"], enrichmentMode: "preserve", campaignFilters: {}, distribution: { batchSize: 100, selectedCampaigns: ["yoigo"] }, enrichmentSource: "api_real", testRunId };
 }
 async function createBase(id: string, mobile: string, revision: string) {
-  await prisma.base.create({ data: { id, codigo: `P001-${id.slice(0, 8)}`, nombreOriginal: `synthetic-${testRunId}.xlsx`, nombreDescriptivo: "P0-01 integration fixture", estado: "LISTA_PARA_DISTRIBUIR", cantidadImportados: 1, cantidadValidos: 1, cantidadExcluidos: 0, metadatos: metadata(revision), registros: { create: { numeroFilaOriginal: 2, movilNormalizado: mobile, tipificacion: "VALIDO", datosOriginales: { version: 1, cells: [mobile], mobile, contactPhone: "", reason: null, enrichedCells: null, provenance: "EXCEL", testRunId } } } } });
+  await prisma.base.create({ data: { id, codigo: `P001-${id.slice(0, 8)}`, nombreOriginal: `synthetic-${testRunId}.xlsx`, nombreDescriptivo: "P0-01 integration fixture", estado: "LISTA_PARA_DISTRIBUIR", cantidadImportados: 1, cantidadValidos: 1, cantidadExcluidos: 0, metadatos: metadata(revision), registros: { create: { numeroFilaOriginal: 2, movilNormalizado: mobile, operadorActual: "Vodafone", tipificacion: "VALIDO", datosOriginales: { version: 1, cells: [mobile], mobile, contactPhone: "", reason: null, enrichedCells: ["Vodafone"], provenance: "EXCEL", testRunId } } } } });
 }
 
 function fingerprint(seed: string) {

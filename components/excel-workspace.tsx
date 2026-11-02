@@ -284,8 +284,8 @@ export function ExcelWorkspace() {
     ];
   }, [activeModule, batch?.exportCompletedAt, cleaning, dataset, enrichmentOutput]);
   const campaignReport = useMemo(
-    () => enrichmentOutput ? buildCampaignReport(enrichmentOutput, campaignOperators, campaignFilters) : null,
-    [campaignFilters, enrichmentOutput],
+    () => enrichmentOutput ? buildCampaignReport({ ...enrichmentOutput, provenanceBySourceRow: batch?.provenanceBySourceRow }, campaignOperators, campaignFilters) : null,
+    [batch?.provenanceBySourceRow, campaignFilters, enrichmentOutput],
   );
   const masterOutput = useMemo(
     () => dataset ? buildMasterOutput(dataset, enrichmentOutput) : null,
@@ -786,7 +786,7 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Aún no hay datos para segmentar" description="Completa la limpieza y el enriquecimiento simulado para consultar la elegibilidad por operador y los filtros geográficos." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
     }
 
-    return <CampaignEngine batch={summarizeBatch(batch)} output={enrichmentOutput} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch.distribution.selectedCampaigns} />;
+    return <CampaignEngine batch={summarizeBatch(batch)} output={enrichmentOutput} provenanceBySourceRow={batch.provenanceBySourceRow} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch.distribution.selectedCampaigns} />;
   }
 
   function renderDistributionModule() {

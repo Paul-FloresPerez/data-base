@@ -25,7 +25,7 @@ test("el batch reciclado opera solo sobre seleccionados y sus lotes no incluyen 
  const batch=recyclingToBatch(analysis,new Set(["NO RESPONDE"]));
  assert.equal(batch.kind,"RECICLADA"); assert.equal(batch.dataset.records.length,1); assert.equal(batch.recyclingHistory?.records.length,2);
  const report=buildCampaignReport(batch.enrichmentOutput!, ["yoigo","vodafone"]); const plan=buildExportPlan(report,["yoigo","vodafone"],100);
- assert.deepEqual(plan.campaigns.map(c=>[c.campaign,c.eligibleCount]),[["yoigo",1],["vodafone",1]]);
+ assert.deepEqual(plan.campaigns.map(c=>[c.campaign,c.eligibleCount]),[["yoigo",1],["vodafone",0]]);
  assert.ok(plan.campaigns.flatMap(c=>c.batches.flatMap(b=>b.rows)).every(row=>row.sourceRow===batch.dataset.records[0]?.sourceRow));
 });
 

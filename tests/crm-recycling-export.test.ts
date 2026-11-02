@@ -45,8 +45,8 @@ test("el XLSX CRM conserva solamente los 24 encabezados en la primera fila", () 
 test("mantiene lotes de cien para diez mil registros CRM sintéticos", () => {
   const rows = Array.from({ length: 10_000 }, (_, index) => ({ sourceRow: index + 2, cells: [`6${String(index).padStart(8, "0")}`, "Orange"] }));
   const projected = buildCrmRecyclingOutput({ columns: ["Teléfono Movil", "Operador Actual"], rows });
-  const report = buildCampaignReport(projected, ["yoigo"]);
-  const plan = buildExportPlan(report, ["yoigo"], 100);
+  const report = buildCampaignReport(projected, ["vodafone"]);
+  const plan = buildExportPlan(report, ["vodafone"], 100);
   const campaign = plan.campaigns[0];
   assert.equal(projected.rows.length, 10_000);
   assert.equal(campaign?.batches.length, 100);
@@ -54,8 +54,8 @@ test("mantiene lotes de cien para diez mil registros CRM sintéticos", () => {
 });
 
 test("el manifiesto separa lotes e indicadores sin datos de contacto", () => {
-  const report = buildCampaignReport(buildCrmRecyclingOutput(source), ["yoigo"]);
-  const plan = buildExportPlan(report, ["yoigo"], 100);
+  const report = buildCampaignReport(buildCrmRecyclingOutput(source), ["vodafone"]);
+  const plan = buildExportPlan(report, ["vodafone"], 100);
   const workbook = createManifestWorkbook(XLSX, plan, { baseId: "base-id", baseOriginalCode: "BAS-2026-03-0001", baseName: "Base reciclada", generatedAt: "2026-03-06T10:00:00.000Z", filters: { provincia: "Madrid" } });
   const lotes = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets.Lotes!, { header: 1, raw: false });
   assert.deepEqual(lotes[0], ["Código de base original", "Nombre", "Fecha", "Campaña", "Lote", "Archivo", "Cantidad de registros", "Estado"]);

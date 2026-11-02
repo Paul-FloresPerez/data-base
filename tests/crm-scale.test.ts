@@ -58,11 +58,11 @@ test("procesa, conserva y distribuye bases CRM sintéticas de 100, 1.000 y 10.00
     assert.equal(output.rows[0]?.cells[2], "00000000");
     assert.equal(output.rows.at(-1)?.cells[output.columns.indexOf("Año")], "2026");
 
-    const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
-    const plan = buildExportPlan(report, ["yoigo", "vodafone"], MAX_BATCH_SIZE);
-    assert.equal(plan.totalEligible, recordCount * 2);
+    const report = buildCampaignReport(output, ["vodafone"]);
+    const plan = buildExportPlan(report, ["vodafone"], MAX_BATCH_SIZE);
+    assert.equal(plan.totalEligible, recordCount);
     assert.equal(plan.uniqueEligibleCount, recordCount);
-    assert.equal(plan.conflictCount, recordCount);
+    assert.equal(plan.conflictCount, 0);
     assert.ok(plan.campaigns.every((campaign) => campaign.eligibleCount === recordCount));
     assert.ok(plan.campaigns.every((campaign) => campaign.batches.every((batch) => batch.rows.length <= MAX_BATCH_SIZE)));
     assert.ok(plan.campaigns.every((campaign) => campaign.batches.flatMap((batch) => batch.rows).length === recordCount));

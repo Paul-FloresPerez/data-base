@@ -2,12 +2,12 @@ import "server-only";
 
 import { Prisma } from "@/generated/prisma/client";
 import { enrichmentScalars, type SaveStartPayload, type SavedLot, type StoredMetadata, type StoredRecord } from "@/lib/persistence/workspace-persistence";
+import { commercialMatrixSnapshot } from "@/lib/campaigns/campaign-engine";
 import { prisma } from "@/lib/server/prisma";
 import { appendBaseLifecycleEvents } from "@/lib/server/audit-storage";
 import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 import { nextBaseCode } from "@/lib/server/base-code";
-import { assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
-import { confirmedExternalSales } from "@/lib/server/sales-storage";
+import { assertCommercialLotsIntegrity, assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
 import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 
 function metadata(value: unknown): StoredMetadata | null {
@@ -110,7 +110,7 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
   const count = await prisma.registro.count({ where: { baseId } });
   if (count !== base.cantidadImportados) throw new Error("La carga de registros aún no está completa.");
   if (!baseMetadata.completed) {
-    const savedRecords = await prisma.registro.findMany({ where: { baseId }, select: { id: true, numeroFilaOriginal: true, movilNormalizado: true, tipificacion: true, datosOriginales: true } });
+    const savedRecords = await prisma.registro.findMany({ where: { baseId }, select: { id: true, numeroFilaOriginal: true, movilNormalizado: true, tipificacion: true, operadorActual: true, datosOriginales: true } });
     const recordsForIntegrity: StoredRecord[] = savedRecords.map((record) => {
       const original = record.datosOriginales as { cells?: unknown; mobile?: unknown; contactPhone?: unknown; reason?: unknown; enrichedCells?: unknown; provenance?: unknown };
       return {
@@ -144,6 +144,14 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
     }
     if (base.estado === "LISTA_PARA_LIMPIAR" && lots.length > 0) throw new Error("Una base sin limpiar no puede contener lotes.");
     assertLotsIntegrity(lots, derived);
+    assertCommercialLotsIntegrity(lots, savedRecords.map((record) => {
+      const original = record.datosOriginales as { provenance?: unknown };
+      return {
+        sourceRow: record.numeroFilaOriginal,
+        operadorActual: record.operadorActual,
+        provenance: ["EXCEL", "CRM", "MOCK", "API_REAL"].includes(String(original.provenance)) ? String(original.provenance) : "EXCEL",
+      };
+    }));
     // This is intentionally enforced immediately before persisting lots, not
     // only in the browser campaign view. A confirmed external sale blocks the
     // mobile across every base and campaign.
@@ -180,7 +188,7 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
         if (!base.baseOriginalId) throw new Error("Una ejecución de reciclaje requiere una base original.");
         await linkGeneratedRecycledBase(transaction, { executionId: baseMetadata.recyclingExecutionId, baseId, baseOriginalId: base.baseOriginalId });
       }
-      await transaction.base.update({ where: { id: baseId }, data: { cantidadValidos: validCount, cantidadExcluidos: excludedCount, metadatos: { ...baseMetadata, completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
+      await transaction.base.update({ where: { id: baseId }, data: { cantidadValidos: validCount, cantidadExcluidos: excludedCount, metadatos: { ...baseMetadata, commercialMatrix: commercialMatrixSnapshot(), completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
       await appendBaseLifecycleEvents(transaction, { baseId, userId, metadata: baseMetadata, imported: base.cantidadImportados, valid: validCount, excluded: excludedCount, lots });
     });
   }

@@ -389,7 +389,7 @@ test("el mock recibe solo los válidos, conserva el orden y es determinista", ()
   assert.ok(dates.some((date) => typeof date === "string"));
 });
 
-test("solo existen campañas Yoigo y Vodafone, y excluyen solo por operador_actual", () => {
+test("la matriz comercial clasifica exclusivamente por operador actual confiable", () => {
   const input: CampaignInput = {
     columns: ["Operador Actual", "Operador Original"],
     rows: [
@@ -407,8 +407,8 @@ test("solo existen campañas Yoigo y Vodafone, y excluyen solo por operador_actu
   assert.equal(normalizeOperator("R CABLE"), "r_cable");
   assert.equal(normalizeOperator("Orange"), "orange");
   assert.deepEqual(report.campaigns.map((campaign) => campaign.operator.id), ["yoigo", "vodafone"]);
-  assert.deepEqual(yoigo?.excludedByOperator.map((record) => record.sourceRow), [2]);
-  assert.deepEqual(yoigo?.eligible.map((record) => record.sourceRow), [3, 4]);
+  assert.deepEqual(yoigo?.excludedByOperator.map((record) => record.sourceRow), [2, 4]);
+  assert.deepEqual(yoigo?.eligible.map((record) => record.sourceRow), [3]);
   assert.deepEqual(vodafone?.excludedByOperator.map((record) => record.sourceRow), [3]);
   assert.deepEqual(vodafone?.eligible.map((record) => record.sourceRow), [2, 4]);
 });
@@ -429,12 +429,12 @@ test("permite ambas campañas y evita repetir una fila dentro de cada una", () =
   const vodafone = report.campaigns.find((campaign) => campaign.operator.id === "vodafone");
 
   assert.equal(yoigo?.totalCleanRecords, 3);
-  assert.deepEqual(yoigo?.eligible.map((record) => record.sourceRow), [3, 4]);
+  assert.deepEqual(yoigo?.eligible.map((record) => record.sourceRow), [3]);
   assert.deepEqual(vodafone?.eligible.map((record) => record.sourceRow), [2, 4]);
   assert.deepEqual(vodafone?.excludedByOperator.map((record) => record.sourceRow), [3]);
 });
 
-test("marca como Sin clasificar operadores vacíos o desconocidos", () => {
+test("deja operadores desconocidos en revisión y no infiere elegibilidad", () => {
   const input: CampaignInput = {
     columns: ["Operador Actual"],
     rows: [
@@ -444,11 +444,40 @@ test("marca como Sin clasificar operadores vacíos o desconocidos", () => {
     ],
   };
 
-  const report = buildCampaignReport(input, ["yoigo"]);
+  const report = buildCampaignReport(input, ["vodafone"]);
   const campaign = report.campaigns[0];
 
   assert.equal(campaign?.eligible.length, 1);
   assert.deepEqual(campaign?.unclassified.map((record) => record.sourceRow), [2, 3]);
+});
+
+test("aplica la matriz vigente, alias exactos y deja MOCK fuera de distribución", () => {
+  const input: CampaignInput = {
+    columns: ["Operador Actual", "Operador Original"],
+    provenanceBySourceRow: { 12: "MOCK" },
+    rows: [
+      { sourceRow: 2, cells: ["MásMóvil", "Vodafone"] },
+      { sourceRow: 3, cells: ["R CABLE", "Vodafone"] },
+      { sourceRow: 4, cells: ["Yoigo", "Vodafone"] },
+      { sourceRow: 5, cells: ["Finetwork", "Orange"] },
+      { sourceRow: 6, cells: ["Movistar", "Orange"] },
+      { sourceRow: 7, cells: ["Vodafone", "Orange"] },
+      { sourceRow: 8, cells: ["Lowi", "Orange"] },
+      { sourceRow: 9, cells: ["Vodafone", "Orange"] },
+      { sourceRow: 10, cells: ["Yoigo", "Orange"] },
+      { sourceRow: 11, cells: ["Operador desconocido", "Orange"] },
+      { sourceRow: 12, cells: ["Orange", "Vodafone"] },
+    ],
+  };
+  const report = buildCampaignReport(input, ["yoigo", "vodafone"]);
+  const yoigo = report.campaigns.find((campaign) => campaign.operator.id === "yoigo")!;
+  const vodafone = report.campaigns.find((campaign) => campaign.operator.id === "vodafone")!;
+  assert.deepEqual(vodafone.eligible.map((row) => row.sourceRow), [2, 3, 4, 10]);
+  assert.deepEqual(yoigo.eligible.map((row) => row.sourceRow), [5, 6, 7, 8, 9]);
+  assert.ok(vodafone.excludedByOperator.some((row) => row.sourceRow === 9));
+  assert.ok(yoigo.excludedByOperator.some((row) => row.sourceRow === 10));
+  assert.ok(yoigo.unclassified.some((row) => row.sourceRow === 11));
+  assert.ok(vodafone.unclassified.some((row) => row.sourceRow === 12));
 });
 
 test("aplica filtros de Provincia, Localidad y Código Postal sin alterar sus ceros", () => {
@@ -504,7 +533,7 @@ test("genera operadores actuales dinámicos y combina sus filtros con ubicación
   assert.equal(report.filterSummary.reasonBreakdown.antiguedad_portabilidad, 1);
   assert.equal(report.filterSummary.reasonBreakdown.operador_actual, 1);
   assert.equal(report.filterSummary.reasonBreakdown.geografia, 1);
-  assert.deepEqual(report.campaigns[0]?.eligible.map((record) => record.sourceRow), [2]);
+  assert.deepEqual(report.campaigns[0]?.eligible.map((record) => record.sourceRow), []);
   assert.deepEqual(report.campaigns[1]?.eligible.map((record) => record.sourceRow), [2]);
 });
 
@@ -551,7 +580,7 @@ function exportOutput(recordCount: number) {
         `+346${String(index).padStart(8, "0")}`,
         String(index).padStart(5, "0"),
         "Interesado",
-        "Orange",
+        "Vodafone",
         index === 0 ? "=HYPERLINK(\"https://example.com\",\"Abrir\")" : "Texto seguro",
       ],
     })),
@@ -571,8 +600,14 @@ test("planifica lotes de 0, 1, 100, 101 y 253 registros sin cambiar su orden", (
   }
 });
 
-test("incluye ambas campañas y mantiene los lotes independientes por operador", () => {
-  const output = exportOutput(101);
+test("incluye ambas campañas con lotes independientes según la matriz", () => {
+  const output = {
+    columns: ["Teléfono Movil", "Operador Actual"],
+    rows: Array.from({ length: 202 }, (_, index) => ({
+      sourceRow: index + 2,
+      cells: [`+346${String(index).padStart(8, "0")}`, index < 101 ? "Vodafone" : "Orange"],
+    })),
+  };
   const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
   const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
 
@@ -601,7 +636,7 @@ test("los lotes respetan los filtros activos de campañas", () => {
   });
   const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
 
-  assert.deepEqual(plan.campaigns[0]?.batches[0]?.rows.map((row) => row.sourceRow), [2, 4]);
+  assert.deepEqual(plan.campaigns[0]?.batches[0]?.rows.map((row) => row.sourceRow), [4]);
   assert.deepEqual(plan.campaigns[1]?.batches[0]?.rows.map((row) => row.sourceRow), [2]);
 });
 
@@ -621,7 +656,10 @@ test("crea XLSX de texto seguro y conserva encabezados, teléfonos y códigos po
 });
 
 test("genera ZIP con carpetas y archivos de lote esperados", async () => {
-  const output = exportOutput(101);
+  const output = {
+    columns: ["Teléfono Movil", "Operador Actual"],
+    rows: Array.from({ length: 202 }, (_, index) => ({ sourceRow: index + 2, cells: [`+346${String(index).padStart(8, "0")}`, index < 101 ? "Vodafone" : "Orange"] })),
+  };
   const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
   const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
   const zipBlob = await createCampaignZip(XLSX, new JSZip(), output, plan, { baseId: "base-prueba", baseName: "Base de prueba", filters: { provincia: "Madrid" }, generatedAt: "2026-10-24T00:00:00.000Z" });
@@ -676,9 +714,9 @@ test("distingue móviles únicos de asignaciones y declara conflictos entre camp
   const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
   const plan = buildExportPlan(report, ["yoigo", "vodafone"], 100);
   assert.equal(plan.uniqueEligibleCount, 2);
-  assert.equal(plan.totalEligible, 3);
-  assert.equal(plan.conflictCount, 1);
-  assert.deepEqual(plan.campaigns.find((campaign) => campaign.campaign === "yoigo")?.batches[0]?.rows.map((row) => row.sourceRow), [2, 3]);
+  assert.equal(plan.totalEligible, 2);
+  assert.equal(plan.conflictCount, 0);
+  assert.deepEqual(plan.campaigns.find((campaign) => campaign.campaign === "yoigo")?.batches[0]?.rows.map((row) => row.sourceRow), [3]);
   assert.deepEqual(plan.campaigns.find((campaign) => campaign.campaign === "vodafone")?.batches[0]?.rows.map((row) => row.sourceRow), [2]);
 });
 

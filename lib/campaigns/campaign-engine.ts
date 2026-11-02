@@ -4,7 +4,7 @@ export const campaignOperators = ["yoigo", "vodafone"] as const;
 
 export type CampaignOperatorId = (typeof campaignOperators)[number];
 
-type KnownOperatorId = CampaignOperatorId | "movistar" | "orange" | "pepephone" | "euskaltel" | "r_cable";
+export type KnownOperatorId = CampaignOperatorId | "movistar" | "orange" | "pepephone" | "euskaltel" | "r_cable" | "masmovil" | "finetwork" | "lowi";
 
 export interface CampaignOperatorDefinition {
   id: CampaignOperatorId;
@@ -29,7 +29,35 @@ const knownOperatorDefinitions: readonly KnownOperatorDefinition[] = [
   { id: "pepephone", label: "Pepephone", aliases: ["pepephone"] },
   { id: "euskaltel", label: "Euskaltel", aliases: ["euskaltel"] },
   { id: "r_cable", label: "R_CABLE", aliases: ["r_cable", "rcable"] },
+  { id: "masmovil", label: "MasMovil", aliases: ["masmovil", "másmóvil"] },
+  { id: "finetwork", label: "Finetwork", aliases: ["finetwork"] },
+  { id: "lowi", label: "Lowi", aliases: ["lowi"] },
 ];
+
+/** Versioned internal commercial policy. It is snapshotted with each completed base. */
+export const COMMERCIAL_MATRIX_VERSION = "2026-11-01.v1";
+
+const commercialMatrix: Readonly<Record<CampaignOperatorId, readonly KnownOperatorId[]>> = {
+  vodafone: ["euskaltel", "masmovil", "orange", "pepephone", "r_cable", "yoigo"],
+  yoigo: ["finetwork", "movistar", "vodafone", "lowi"],
+};
+
+export type CommercialEligibility = "ELEGIBLE" | "EXCLUIDO_OPERADOR" | "REVISION" | "FUENTE_MOCK";
+
+export interface CommercialMatrixSnapshot {
+  version: typeof COMMERCIAL_MATRIX_VERSION;
+  campaigns: Record<CampaignOperatorId, readonly KnownOperatorId[]>;
+}
+
+export function commercialMatrixSnapshot(): CommercialMatrixSnapshot {
+  return {
+    version: COMMERCIAL_MATRIX_VERSION,
+    campaigns: {
+      yoigo: [...commercialMatrix.yoigo],
+      vodafone: [...commercialMatrix.vodafone],
+    },
+  };
+}
 
 const operatorAliasMap = new Map<string, KnownOperatorId>(
   knownOperatorDefinitions.flatMap((operator) =>
@@ -58,6 +86,7 @@ export interface CampaignInputRow {
 export interface CampaignInput {
   columns: readonly string[];
   rows: readonly CampaignInputRow[];
+  provenanceBySourceRow?: Readonly<Record<number, string>>;
 }
 
 export interface GeographicFilters {
@@ -133,6 +162,18 @@ export function normalizeComparableValue(value: string): string {
 
 export function normalizeOperator(value: string): KnownOperatorId | null {
   return operatorAliasMap.get(normalizeComparableValue(value)) ?? null;
+}
+
+/** Uses only a recognized current operator. MOCK output is never commercial evidence. */
+export function commercialEligibility(
+  campaign: CampaignOperatorId,
+  currentOperator: string,
+  provenance: string | undefined,
+): CommercialEligibility {
+  if (provenance === "MOCK") return "FUENTE_MOCK";
+  const operator = normalizeOperator(currentOperator);
+  if (!operator) return "REVISION";
+  return commercialMatrix[campaign].includes(operator) ? "ELEGIBLE" : "EXCLUIDO_OPERADOR";
 }
 
 export function findCampaignColumns(columns: readonly string[]): CampaignColumnMapping {
@@ -353,14 +394,14 @@ export function buildCampaignReport(
         columnMapping.operador_actual === undefined
           ? ""
           : (row.cells[columnMapping.operador_actual] ?? "");
-      const operator = normalizeOperator(operatorValue);
+      const eligibility = commercialEligibility(campaign.id, operatorValue, input.provenanceBySourceRow?.[row.sourceRow]);
 
-      if (operator === null) {
-        unclassified.push(row);
-      } else if (operator === campaign.id) {
-        excludedByOperator.push(row);
-      } else {
+      if (eligibility === "ELEGIBLE") {
         eligible.push(row);
+      } else if (eligibility === "REVISION" || eligibility === "FUENTE_MOCK") {
+        unclassified.push(row);
+      } else {
+        excludedByOperator.push(row);
       }
     }
 

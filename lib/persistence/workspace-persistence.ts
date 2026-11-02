@@ -1,5 +1,5 @@
 import type { CampaignFilters, CampaignOperatorId } from "../campaigns/campaign-engine.ts";
-import { buildCampaignReport, campaignOperators } from "../campaigns/campaign-engine.ts";
+import { buildCampaignReport, campaignOperators, commercialMatrixSnapshot, type CommercialMatrixSnapshot } from "../campaigns/campaign-engine.ts";
 import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
@@ -42,6 +42,8 @@ export interface StoredMetadata {
   campaignFilters: Omit<CampaignFilters, "asOfDate"> & { asOfDate?: string };
   distribution: DistributionSettings;
   enrichmentSource: "mock" | "crm" | "excel" | "api_real" | null;
+  /** Immutable snapshot of the commercial policy used to complete this base. */
+  commercialMatrix?: CommercialMatrixSnapshot;
   kind?: BatchKind;
   operationalSourceRows?: number[];
   /** Client-side export was actually generated and download started. */
@@ -161,6 +163,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
                 ? "api_real"
                 : "excel"
           : null,
+        commercialMatrix: commercialMatrixSnapshot(),
         kind: batch.kind,
         operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
         exportCompletedAt: batch.exportCompletedAt,
@@ -192,7 +195,7 @@ export function splitRecords(records: StoredRecord[]): StoredRecord[][] {
 
 export function buildStoredLots(batch: WorkingBatch): SavedLot[] {
   if (!batch.enrichmentOutput) return [];
-  const report = buildCampaignReport(batch.enrichmentOutput, campaignOperators, batch.campaignFilters);
+  const report = buildCampaignReport({ ...batch.enrichmentOutput, provenanceBySourceRow: batch.provenanceBySourceRow }, campaignOperators, batch.campaignFilters);
   const plan = buildExportPlan(report, batch.distribution.selectedCampaigns, batch.distribution.batchSize);
   return plan.campaigns.flatMap((campaign) => campaign.batches.map((lot) => ({
     campaign: campaign.campaign.toUpperCase() as "YOIGO" | "VODAFONE",

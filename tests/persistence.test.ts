@@ -15,6 +15,7 @@ test("serializa y recupera una base preservando los ceros y la limpieza", () => 
   const batch = createWorkingBatch(dataset, "11111111-1111-4111-8111-111111111111", "2026-10-22T00:00:00.000Z");
   batch.cleaning = cleanDataset(dataset);
   const { start, records } = serializeBatch(batch, "Clientes octubre");
+  assert.equal(start.metadata.commercialMatrix?.version, "2026-11-01.v1");
   const restored = restoreBatch({ id: start.id, name: start.name, createdAt: batch.createdAt, metadata: { ...start.metadata, completed: true, revision: null }, records: records.map((record, index) => ({ ...record, id: String(index) })) });
   assert.equal(restored.dataset.records[0]?.cells[1], "01234");
   assert.equal(restored.cleaning?.validRecords.length, 1);
