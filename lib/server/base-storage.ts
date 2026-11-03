@@ -10,6 +10,7 @@ import { nextBaseCode } from "@/lib/server/base-code";
 import { assertCommercialLotsIntegrity, assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
 import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 import { createCommercialReservations } from "@/lib/server/commercial-reservation-storage";
+import { normalizeOriginalBaseSearch, type OriginalBaseOption } from "@/lib/base-history/original-base-search";
 
 function metadata(value: unknown): StoredMetadata | null {
   if (!value || typeof value !== "object") return null;
@@ -211,6 +212,64 @@ export async function listSavedBases() {
     const stored = metadata(base.metadatos);
     return stored?.completed ? [{ id: base.id, code: base.codigo, name: base.nombreDescriptivo, originalFileName: base.nombreOriginal, receivedAt: base.fechaRecepcion?.toISOString().slice(0, 10) ?? null, originalBaseId: base.baseOriginalId, createdAt: base.creadoEn.toISOString(), updatedAt: base.actualizadoEn.toISOString(), state: base.estado, kind: base.tipo, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos }] : [];
   });
+}
+
+type OriginalBaseSearchRow = {
+  id: string;
+  codigo: string;
+  nombre_original: string;
+  nombre_descriptivo: string;
+  fecha_recepcion: Date | null;
+  creado_en: Date;
+  estado: string;
+  cantidad_importados: number;
+  total: bigint;
+};
+
+/** Lightweight server-side selector data. It never selects CRM records. */
+export async function searchOriginalBases(input: { query: string; page: number; limit: number; selectedId?: string | null }) {
+  const query = normalizeOriginalBaseSearch(input.query).slice(0, 120);
+  const page = Math.max(0, Math.min(input.page, 10_000));
+  const limit = Math.max(1, Math.min(input.limit, 25));
+  const offset = page * limit;
+  const term = `%${query}%`;
+  const accentFrom = "áéíóúüñ";
+  const accentTo = "aeiouun";
+  const rows = await prisma.$queryRaw<OriginalBaseSearchRow[]>(Prisma.sql`
+    SELECT id::text, codigo, nombre_original, nombre_descriptivo, fecha_recepcion, creado_en, estado, cantidad_importados,
+      COUNT(*) OVER() AS total
+    FROM bases
+    WHERE tipo = 'ORIGINAL'
+      AND metadatos ->> 'completed' = 'true'
+      AND (${query} = '' OR (
+        translate(lower(codigo), ${accentFrom}, ${accentTo}) LIKE ${term}
+        OR translate(lower(nombre_descriptivo), ${accentFrom}, ${accentTo}) LIKE ${term}
+        OR translate(lower(nombre_original), ${accentFrom}, ${accentTo}) LIKE ${term}
+      ))
+    ORDER BY actualizado_en DESC, id DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `);
+  const toOption = (row: OriginalBaseSearchRow): OriginalBaseOption => ({
+    id: row.id,
+    code: row.codigo,
+    name: row.nombre_descriptivo,
+    originalFileName: row.nombre_original,
+    receivedAt: row.fecha_recepcion?.toISOString().slice(0, 10) ?? null,
+    imported: row.cantidad_importados,
+    state: row.estado,
+    kind: "ORIGINAL",
+  });
+  const selected = input.selectedId ? await prisma.base.findFirst({
+    where: { id: input.selectedId, tipo: "ORIGINAL", metadatos: { path: ["completed"], equals: true } },
+    select: { id: true, codigo: true, nombreOriginal: true, nombreDescriptivo: true, fechaRecepcion: true, cantidadImportados: true, estado: true },
+  }) : null;
+  return {
+    bases: rows.map(toOption),
+    page,
+    limit,
+    total: Number(rows[0]?.total ?? BigInt(0)),
+    selected: selected ? { id: selected.id, code: selected.codigo, name: selected.nombreDescriptivo, originalFileName: selected.nombreOriginal, receivedAt: selected.fechaRecepcion?.toISOString().slice(0, 10) ?? null, imported: selected.cantidadImportados, state: selected.estado, kind: "ORIGINAL" as const } : null,
+  };
 }
 
 export async function getSavedBase(baseId: string) {

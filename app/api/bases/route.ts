@@ -1,4 +1,4 @@
-import { listSavedBases, beginBaseSave } from "@/lib/server/base-storage";
+import { listSavedBases, beginBaseSave, searchOriginalBases } from "@/lib/server/base-storage";
 import { isPlainObject, readJson, uuidPattern } from "@/lib/server/request-validation";
 import { requireAdminApi } from "@/lib/server/require-admin";
 
@@ -17,8 +17,26 @@ function isColumnMapping(value: unknown, columnCount: number): boolean {
   return Object.values(value.enriched).every((field) => Number.isInteger(field) && Number(field) >= 0 && Number(field) < columnCount);
 }
 
-export async function GET() {
+function asBoundedInteger(value: string | null, fallback: number, maximum: number): number | null {
+  if (value === null) return fallback;
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= maximum ? parsed : null;
+}
+
+export async function GET(request: Request) {
   if (!await requireAdminApi()) return Response.json({ error: "No autorizado" }, { status: 401 });
+  const url = new URL(request.url);
+  if (url.searchParams.get("purpose") === "original-selector") {
+    const query = url.searchParams.get("q") ?? "";
+    const page = asBoundedInteger(url.searchParams.get("page"), 0, 10_000);
+    const limit = asBoundedInteger(url.searchParams.get("limit"), 12, 25);
+    const selectedId = url.searchParams.get("selectedId");
+    if (query.length > 120 || page === null || limit === null || (selectedId && !uuidPattern.test(selectedId))) {
+      return Response.json({ error: "Búsqueda de base no válida." }, { status: 400 });
+    }
+    return Response.json(await searchOriginalBases({ query, page, limit, selectedId }));
+  }
   return Response.json({ bases: await listSavedBases() });
 }
 

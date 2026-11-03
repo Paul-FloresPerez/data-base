@@ -4,6 +4,7 @@ import type { ChangeEvent, InputHTMLAttributes } from "react";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { DataTable } from "@/components/data-table";
+import { OriginalBaseSelector } from "@/components/original-base-selector";
 import {
   analyzeRecyclingFiles,
   type RecyclingAnalysis,
@@ -21,7 +22,6 @@ type ExceptionFilter = "all" | "revision" | "bloqueado";
 type SourceIssue = { fileName: string; reason: string };
 type ImportProgress = { processed: number; total: number; valid: number; failed: number; duplicates: number };
 type DirectoryInputProps = InputHTMLAttributes<HTMLInputElement> & { webkitdirectory?: string; directory?: string };
-type OriginalBase = { id: string; code: string; name: string; kind: "ORIGINAL" | "RECICLADA"; state: string };
 type ConciliationSummary = { totalRows: number; invalidRows: number; uniqueValidMobiles: number; uniqueFoundMobiles: number; uniqueMissingMobiles: number; duplicateRows: number; mobilesWithMultipleManagements: number; files: { fileId: string; fileName: string; totalRows: number; invalidRows: number; uniqueValidMobiles: number; uniqueFoundMobiles: number; uniqueMissingMobiles: number; duplicateRows: number; mobilesWithMultipleManagements: number; incidents: { sourceRow: number; reason: string }[] }[] };
 type RecyclingResult = { id: string; baseOriginalId: string; recycledBaseId: string | null; status: string; createdAt: string; effectiveDate: string; user: string; files: string[]; criteria: { recyclableTipifications: string[] } | null; summary: Record<string, number> | null; incidentsOutsideBase: number; results: { originalRecordId: string; decision: string; reason: string }[] };
 type RecyclingHistoryItem = Omit<RecyclingResult, "results">;
@@ -112,7 +112,6 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
   const [issues, setIssues] = useState<SourceIssue[]>([]);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [createdBatch, setCreatedBatch] = useState<WorkingBatch | null>(null);
-  const [originalBases, setOriginalBases] = useState<OriginalBase[]>([]);
   const [originalBaseId, setOriginalBaseId] = useState(initialOriginalBaseId);
   const [execution, setExecution] = useState<RecyclingResult | null>(null);
   const [preparedExecutionId, setPreparedExecutionId] = useState<string | null>(null);
@@ -120,10 +119,6 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
   const [isEvaluating, setIsEvaluating] = useState(false);
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("es-ES"));
   const importing = progress !== null && progress.processed < progress.total;
-
-  useEffect(() => {
-    void api<{ bases: OriginalBase[] }>("/api/bases").then(({ bases }) => setOriginalBases(bases.filter((base) => base.kind === "ORIGINAL"))).catch(() => setMessage("No se pudieron cargar las bases originales guardadas."));
-  }, []);
 
   async function load(files: readonly File[] | FileList | null) {
     const selectedFiles = Array.from(files ?? []);
@@ -337,7 +332,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
   }
 
   const fileInputs = <><input ref={input} className="sr-only" type="file" accept=".xlsx,.zip,application/zip,application/x-zip-compressed" multiple onChange={handleInput} /><input ref={folderInput} className="sr-only" type="file" accept=".xlsx" multiple {...({ webkitdirectory: "", directory: "", onChange: handleInput } satisfies DirectoryInputProps)} /></>;
-  const importControls = <div className="flex flex-wrap items-center gap-2"><label className="text-sm font-semibold text-slate-700">Base original<select value={originalBaseId} onChange={(event) => { setOriginalBaseId(event.target.value); preparation.current = null; setCreatedBatch(null); setExecution(null); setPreparedExecutionId(null); setConciliation(null); }} className="ml-2 min-h-10 rounded-md border border-slate-300 bg-white px-2 text-sm font-normal"><option value="">Seleccionar</option>{originalBases.map((base) => <option key={base.id} value={base.id}>{base.code} · {base.name}</option>)}</select></label><button type="button" disabled={importing || !originalBaseId} onClick={() => input.current?.click()} className="rounded-md bg-[#174ea6] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">{importing ? "Procesando…" : "Seleccionar Excel o ZIP"}</button><button type="button" disabled={importing || !originalBaseId} onClick={() => folderInput.current?.click()} className="rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-60">Carpeta de Excel</button></div>;
+  const importControls = <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end"><OriginalBaseSelector value={originalBaseId} onChange={(baseId) => { setOriginalBaseId(baseId); preparation.current = null; setCreatedBatch(null); setExecution(null); setPreparedExecutionId(null); setConciliation(null); }} disabled={importing} /><button type="button" disabled={importing || !originalBaseId} onClick={() => input.current?.click()} className="min-h-10 rounded-md bg-[#174ea6] px-4 py-2.5 text-sm font-semibold text-white disabled:bg-slate-300">{importing ? "Procesando…" : "Seleccionar Excel o ZIP"}</button><button type="button" disabled={importing || !originalBaseId} onClick={() => folderInput.current?.click()} className="min-h-10 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 disabled:opacity-60">Carpeta de Excel</button></div>;
   const progressPanel = progress ? <section className="border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950"><p className="font-semibold">Procesando {progress.processed} de {progress.total} Excel</p><p className="mt-1">Válidos: {progress.valid} · Fallidos: {progress.failed} · Duplicados omitidos: {progress.duplicates}</p><button type="button" onClick={() => { cancelImport.current = true; }} className="mt-3 font-semibold text-[#174ea6]">Cancelar importación</button></section> : null;
   const issuePanel = issues.length ? <details className="border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><summary className="cursor-pointer font-semibold">{issues.length} archivo{issues.length === 1 ? " con incidencia" : "s con incidencias"}</summary><ul className="mt-2 max-h-44 space-y-1 overflow-auto text-xs">{issues.map((issue, index) => <li key={`${issue.fileName}-${index}`}><span className="font-medium">{issue.fileName}</span>: {issue.reason}</li>)}</ul></details> : null;
 
