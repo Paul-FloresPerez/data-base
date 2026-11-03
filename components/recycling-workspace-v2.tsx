@@ -14,7 +14,6 @@ import { restoreBatch, type LoadedBase } from "@/lib/persistence/workspace-persi
 import type { WorkingBatch } from "@/lib/workspace/batch";
 
 const exceptionPageSize = 10;
-const selectableTipifications = [...defaultRecyclableTipifications];
 const directWorkbookLimit = 30 * 1024 * 1024;
 const sourceLimit = 500;
 
@@ -202,7 +201,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
           if (!sheetName || !workbook.Sheets[sheetName]) throw new Error("El libro no contiene una hoja legible.");
           const rows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets[sheetName], { header: 1, raw: false, defval: "" });
           if (!rows.length || !(rows[0] ?? []).some((cell) => String(cell).trim())) throw new Error("La hoja no contiene encabezados legibles.");
-          parsed.push({ fileName: source.fileName, zipName: source.zipName, internalPath: source.internalPath, sheetName, columns: (rows[0] ?? []).map(String), rows: rows.slice(1).map((row) => row.map(String)) });
+          parsed.push({ fileName: source.fileName, importId: archive.importIdFromFingerprint(source.fingerprint), zipName: source.zipName, internalPath: source.internalPath, sheetName, columns: (rows[0] ?? []).map(String), rows: rows.slice(1).map((row) => row.map(String)) });
           valid += 1;
         } catch (caught) {
           rejected.push({ fileName: source.internalPath ?? source.fileName, reason: caught instanceof Error ? caught.message : "Excel corrupto o no legible." });
@@ -212,8 +211,9 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
       if (parsed.length) {
-        setAnalysis(analyzeRecyclingFiles(parsed));
-        setSelectedTipifications(new Set(defaultRecyclableTipifications));
+        const nextAnalysis = analyzeRecyclingFiles(parsed);
+        setAnalysis(nextAnalysis);
+        setSelectedTipifications(new Set(defaultRecyclableTipifications.filter((tipification) => Object.keys(nextAnalysis.tipifications).some((value) => normalizeRecyclingTipification(value) === tipification))));
         setQuery("");
         setExceptionFilter("all");
         setPage(0);
@@ -236,10 +236,11 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     void load(files);
   }
 
+  const availableTipifications = useMemo(() => {
+    if (!analysis) return [];
+    return [...new Set(Object.keys(analysis.tipifications).map(normalizeRecyclingTipification).filter(Boolean))].sort((left, right) => left.localeCompare(right, "es-ES"));
+  }, [analysis]);
   const candidateCount = useMemo(() => analysis?.winners.filter((record) => record.bucket !== "bloqueado" && selectedTipifications.has(normalizeRecyclingTipification(record.tipification))).length ?? 0, [analysis, selectedTipifications]);
-  // The existing primary control starts server reconciliation. It must remain
-  // available for invalid-only files so their incidents can be reviewed.
-  const selectedCount = candidateCount || (analysis?.conciliationRows.length ? 1 : 0);
   const exceptions = useMemo(() => {
     if (!analysis) return [];
     return analysis.winners.filter((record) => record.reviewReason).filter((record) => {
@@ -275,7 +276,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     try {
       if (!preparation.current) {
         const fileIds = new Map<string, string>();
-        for (const row of analysis.conciliationRows) if (!fileIds.has(row.fileKey)) fileIds.set(row.fileKey, operationId());
+        for (const row of analysis.conciliationRows) if (!fileIds.has(row.fileKey)) fileIds.set(row.fileKey, row.importId ?? operationId());
         preparation.current = { operationId: operationId(), fileIds };
       }
       const plan = preparation.current;
@@ -292,21 +293,13 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     }
   }
 
-  async function generateBatch() {
-    if (!analysis || isEvaluating) return;
-    if (!preparedExecutionId || !conciliation) {
-      await prepareConciliation();
-      return;
-    }
-    if (candidateCount === 0 || conciliation.uniqueFoundMobiles === 0) {
-      setMessage("La conciliación no contiene candidatos elegibles; se conservaron las incidencias y no se generará una base reciclada.");
-      return;
-    }
+  async function evaluateRecycling() {
+    if (!analysis || !preparedExecutionId || !conciliation || isEvaluating || execution) return;
     setIsEvaluating(true);
     setMessage(null);
     try {
       const plan = preparation.current!;
-      const evaluated = execution ?? await (async () => {
+      const evaluated = await (async () => {
         const rows = analysis.records.map((record) => {
           const key = `${record.zipName ?? ""}|${record.internalPath ?? ""}|${record.fileName}`;
           return { importId: plan.fileIds.get(key), sourceRow: record.originRow, mobile: record.mobile, managedAt: record.date || null, tipification: record.tipification || null, confirmedSale: record.confirmedSale, saleAmbiguous: record.saleAmbiguous, saleEvidence: record.saleEvidence ?? null, fileName: record.fileName, sheetName: record.sheetName, zipName: record.zipName ?? null, internalPath: record.internalPath ?? null };
@@ -314,15 +307,30 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
         for (let index = 0; index < rows.length; index += 100) await api(`/api/reciclaje/${preparedExecutionId}/gestiones`, { method: "POST", body: JSON.stringify({ rows: rows.slice(index, index + 100) }) });
         return api<RecyclingResult>(`/api/reciclaje/${preparedExecutionId}/finalizar`, { method: "POST" });
       })();
-      const confirmed = await api<{ baseId: string }>(`/api/reciclaje/${evaluated.id}/confirmar`, { method: "POST" });
+      setExecution(evaluated);
+      setMessage((evaluated.summary?.ELEGIBLE ?? 0) > 0
+        ? `Evaluación completada: ${evaluated.summary?.ELEGIBLE ?? 0} candidatos cumplen todas las reglas.`
+        : "La evaluación no encontró candidatos elegibles. Las incidencias y decisiones quedan disponibles para revisión.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo evaluar el reciclaje.");
+    } finally {
+      setIsEvaluating(false);
+    }
+  }
+
+  async function generateBatch() {
+    if (!execution || isEvaluating || (execution.summary?.ELEGIBLE ?? 0) === 0) return;
+    setIsEvaluating(true);
+    setMessage(null);
+    try {
+      const confirmed = await api<{ baseId: string }>(`/api/reciclaje/${execution.id}/confirmar`, { method: "POST" });
       const loaded = await api<{ base: LoadedBase }>(`/api/bases/${confirmed.baseId}`);
       const batch = restoreBatch(loaded.base);
-      setExecution(evaluated);
       setCreatedBatch(batch);
       onCreate(batch);
       setMessage(`Evaluación y guardado completados: ${batch.dataset.records.length} móviles elegibles. La base reciclada ya está vinculada de forma permanente al historial.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo evaluar el reciclaje.");
+      setMessage(error instanceof Error ? error.message : "No se pudo generar la base reciclada.");
     } finally {
       setIsEvaluating(false);
     }
@@ -337,6 +345,20 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     return <section className="space-y-5"><div className="border-b border-slate-200 pb-5"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#174ea6]">Consolidación local</p><h2 className="mt-1 text-2xl font-semibold text-[#0f274f]">Reciclaje CRM</h2><p className="mt-2 max-w-3xl text-sm text-slate-600">Importa varios XLSX o ZIP con subcarpetas. Todo se procesa en este navegador y no se envía a Neon ni a una API.</p></div>{fileInputs}{importControls}<RecyclingHistory baseId={originalBaseId} /><p className="text-xs text-slate-500">Límites: 500 Excel, 30 MB por Excel, 250 MB por ZIP comprimido y 750 MB descomprimidos por ZIP. La carpeta es opcional y depende del navegador.</p>{progressPanel}{message ? <p role="status" className="text-sm text-slate-700">{message}</p> : null}{issuePanel}</section>;
   }
 
-  const summary: [string, number][] = [["Filas CRM", conciliation?.totalRows ?? analysis.conciliationRows.length], ["Móviles únicos válidos", conciliation?.uniqueValidMobiles ?? 0], ["Coincidentes", conciliation?.uniqueFoundMobiles ?? 0], ["No encontrados", conciliation?.uniqueMissingMobiles ?? 0], ["Filas inválidas", conciliation?.invalidRows ?? 0], ["Filas repetidas", conciliation?.duplicateRows ?? 0], ["Gestiones múltiples", conciliation?.mobilesWithMultipleManagements ?? 0], ["Exportables", execution?.summary?.ELEGIBLE ?? selectedCount]];
-  return <section className="space-y-5"><div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#174ea6]">Revisión humana requerida</p><h2 className="mt-1 text-2xl font-semibold text-[#0f274f]">Reciclaje consolidado</h2><p className="mt-2 text-sm text-slate-600">La base reciclada contiene solo los seleccionados; el historial CRM se conserva separado y nunca se exporta.</p></div><button type="button" onClick={() => input.current?.click()} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Importar otros archivos</button></div>{fileInputs}<dl className="grid grid-cols-2 border border-slate-200 bg-white sm:grid-cols-3 lg:grid-cols-6">{summary.map(([label, value]) => <div key={label} className="border-b border-r border-slate-100 px-3 py-2 last:border-r-0 lg:border-b-0"><dt className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-lg font-semibold text-slate-900">{value}</dd></div>)}</dl><section className="border border-slate-200 bg-white p-4"><div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold">Candidatos por tipificación</p><p className="mt-1 text-xs text-slate-500">NO RESPONDE, BUZÓN DE VOZ y CORTA LLAMADA se seleccionan inicialmente. AGENDADO es seguimiento opcional.</p></div><p className="text-sm font-semibold text-[#174ea6]">{selectedCount} para evaluación comercial</p></div><div className="mt-3 flex flex-wrap gap-2">{selectableTipifications.map((type) => <label key={type} className={`cursor-pointer rounded-md border px-3 py-2 text-sm ${selectedTipifications.has(type) ? "border-blue-600 bg-blue-50 text-blue-900" : "border-slate-200 text-slate-700"}`}><input type="checkbox" checked={selectedTipifications.has(type)} onChange={() => changeSelection(type)} className="sr-only" />{type} <span className="ml-1 font-mono text-xs">{analysis.tipifications[type] ?? 0}</span></label>)}<button type="button" onClick={() => { setSelectedTipifications(new Set(selectableTipifications)); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Todas</button><button type="button" onClick={() => { setSelectedTipifications(new Set()); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Ninguna</button></div><button type="button" disabled={selectedCount === 0} onClick={generateBatch} className="mt-4 rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">Generar base reciclada</button></section>{createdBatch ? <section role="status" className="flex flex-col gap-3 border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-emerald-900"><span className="font-semibold">Base reciclada creada:</span> {createdBatch.dataset.records.length} registros operativos · <span className="font-mono">{createdBatch.id.slice(0, 8)}</span>.</p><button type="button" onClick={onContinue} className="rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white">Continuar a campañas</button></section> : null}<section className="border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold">Excepciones y bloqueos</p><p className="mt-1 text-xs text-slate-500">Pendientes de revisión o bloqueados; no se consideran habilitados para contactar.</p></div><div className="flex gap-2"><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="Buscar" className="min-h-9 rounded-md border border-slate-300 px-2 text-sm" /><select value={exceptionFilter} onChange={(event) => { setExceptionFilter(event.target.value as ExceptionFilter); setPage(0); }} className="min-h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"><option value="all">Todas</option><option value="revision">Revisión</option><option value="bloqueado">Bloqueados</option></select></div></div><div className="mt-4"><DataTable caption="Excepciones del reciclaje" columns={["Estado", "Tipificación", "Archivo", "Hoja", "Fila", "Motivo"]} rows={exceptionRows.map((record) => ({ id: String(record.sourceRow), cells: [record.bucket, record.tipification || "Sin tipificación", record.fileName, record.sheetName, String(record.originRow), record.reviewReason ?? "Pendiente de revisión"] }))} emptyMessage="No hay excepciones con los filtros actuales." /></div>{exceptions.length > exceptionPageSize ? <div className="mt-3 flex items-center justify-end gap-3 text-sm"><button type="button" disabled={page === 0} onClick={() => setPage((current) => current - 1)} className="font-semibold text-[#174ea6] disabled:text-slate-400">Anterior</button><span>{page + 1} / {exceptionPages}</span><button type="button" disabled={page >= exceptionPages - 1} onClick={() => setPage((current) => current + 1)} className="font-semibold text-[#174ea6] disabled:text-slate-400">Siguiente</button></div> : null}</section></section>;
+  const summary: [string, number][] = [["Filas CRM", conciliation?.totalRows ?? analysis.conciliationRows.length], ["Móviles únicos válidos", conciliation?.uniqueValidMobiles ?? 0], ["Coincidentes", conciliation?.uniqueFoundMobiles ?? 0], ["No encontrados", conciliation?.uniqueMissingMobiles ?? 0], ["Filas inválidas", conciliation?.invalidRows ?? 0], ["Filas repetidas", conciliation?.duplicateRows ?? 0], ["Gestiones múltiples", conciliation?.mobilesWithMultipleManagements ?? 0], ["Elegibles", execution?.summary?.ELEGIBLE ?? 0]];
+  const evaluatedEligible = execution?.summary?.ELEGIBLE ?? 0;
+  return <section className="space-y-5">
+    <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#174ea6]">Revisión humana requerida</p><h2 className="mt-1 text-2xl font-semibold text-[#0f274f]">Reciclaje consolidado</h2><p className="mt-2 text-sm text-slate-600">La base reciclada contiene solo los seleccionados; el historial CRM se conserva separado y nunca se exporta.</p></div><button type="button" onClick={() => input.current?.click()} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700">Importar otros archivos</button></div>
+    {fileInputs}
+    <dl className="grid grid-cols-2 border border-slate-200 bg-white sm:grid-cols-3 lg:grid-cols-6">{summary.map(([label, value]) => <div key={label} className="border-b border-r border-slate-100 px-3 py-2 last:border-r-0 lg:border-b-0"><dt className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-lg font-semibold text-slate-900">{value}</dd></div>)}</dl>
+    <section className="border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold">Tipificaciones a evaluar</p><p className="mt-1 text-xs text-slate-500">NO CONTESTA, BUZÓN DE VOZ y AGENDADO se seleccionan inicialmente cuando aparecen en los archivos. La evaluación mantiene todas las gestiones históricas.</p></div><p className="text-sm font-semibold text-[#174ea6]">{candidateCount} coincidencias locales con tipificación seleccionada</p></div>
+      <div className="mt-3 flex flex-wrap gap-2">{availableTipifications.map((type) => <label key={type} className={`cursor-pointer rounded-md border px-3 py-2 text-sm ${selectedTipifications.has(type) ? "border-blue-600 bg-blue-50 text-blue-900" : "border-slate-200 text-slate-700"}`}><input type="checkbox" checked={selectedTipifications.has(type)} onChange={() => changeSelection(type)} className="sr-only" />{type} <span className="ml-1 font-mono text-xs">{Object.entries(analysis.tipifications).filter(([value]) => normalizeRecyclingTipification(value) === type).reduce((total, [, count]) => total + count, 0)}</span></label>)}<button type="button" onClick={() => { setSelectedTipifications(new Set(availableTipifications)); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Todas</button><button type="button" onClick={() => { setSelectedTipifications(new Set()); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Ninguna</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={isEvaluating || !originalBaseId || Boolean(preparedExecutionId)} onClick={prepareConciliation} className="rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{preparedExecutionId ? "Conciliación completada" : "1. Conciliar archivo CRM"}</button><button type="button" disabled={isEvaluating || !preparedExecutionId || Boolean(execution)} onClick={evaluateRecycling} className="rounded-md border border-[#174ea6] px-4 py-2 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400">{execution ? "Evaluación completada" : "2. Evaluar reciclaje"}</button><button type="button" disabled={isEvaluating || !execution || evaluatedEligible === 0 || Boolean(createdBatch)} onClick={generateBatch} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">3. Generar base reciclada</button></div>
+      {execution?.summary ? <dl className="mt-4 grid grid-cols-2 border border-slate-200 sm:grid-cols-3 lg:grid-cols-6">{[["Elegibles", execution.summary.ELEGIBLE ?? 0], ["Ventas bloqueadas", execution.summary.BLOQUEADO_VENTA ?? 0], ["Tipificación / gestión", execution.summary.REVISION_GESTION ?? 0], ["Permanencia", execution.summary.REVISION_PERMANENCIA ?? 0], ["Reservas / conflictos", execution.summary.REVISION_CONFLICTO ?? 0], ["Fuera de rango", execution.summary.FUERA_RANGO_HISTORICO ?? 0]].map(([label, value]) => <div key={String(label)} className="border-b border-r border-slate-100 px-3 py-2 lg:border-b-0"><dt className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-base font-semibold text-slate-900">{value}</dd></div>)}</dl> : null}
+      {execution && evaluatedEligible === 0 ? <p role="status" className="mt-3 text-xs text-amber-800">No hay candidatos elegibles después de validar ventas, reservas, tipificación y permanencia. La base no se puede generar; consulta las decisiones e incidencias.</p> : null}
+    </section>
+    {createdBatch ? <section role="status" className="flex flex-col gap-3 border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-sm text-emerald-900"><span className="font-semibold">Base reciclada creada:</span> {createdBatch.dataset.records.length} registros operativos · <span className="font-mono">{createdBatch.id.slice(0, 8)}</span>.</p><button type="button" onClick={onContinue} className="rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white">Continuar a campañas</button></section> : null}
+    <section className="border border-slate-200 bg-white p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold">Excepciones y bloqueos</p><p className="mt-1 text-xs text-slate-500">Pendientes de revisión o bloqueados; no se consideran habilitados para contactar.</p></div><div className="flex gap-2"><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} placeholder="Buscar" className="min-h-9 rounded-md border border-slate-300 px-2 text-sm" /><select value={exceptionFilter} onChange={(event) => { setExceptionFilter(event.target.value as ExceptionFilter); setPage(0); }} className="min-h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"><option value="all">Todas</option><option value="revision">Revisión</option><option value="bloqueado">Bloqueados</option></select></div></div><div className="mt-4"><DataTable caption="Excepciones del reciclaje" columns={["Estado", "Tipificación", "Archivo", "Hoja", "Fila", "Motivo"]} rows={exceptionRows.map((record) => ({ id: String(record.sourceRow), cells: [record.bucket, record.tipification || "Sin tipificación", record.fileName, record.sheetName, String(record.originRow), record.reviewReason ?? "Pendiente de revisión"] }))} emptyMessage="No hay excepciones con los filtros actuales." /></div>{exceptions.length > exceptionPageSize ? <div className="mt-3 flex items-center justify-end gap-3 text-sm"><button type="button" disabled={page === 0} onClick={() => setPage((current) => current - 1)} className="font-semibold text-[#174ea6] disabled:text-slate-400">Anterior</button><span>{page + 1} / {exceptionPages}</span><button type="button" disabled={page >= exceptionPages - 1} onClick={() => setPage((current) => current + 1)} className="font-semibold text-[#174ea6] disabled:text-slate-400">Siguiente</button></div> : null}</section>
+  </section>;
 }

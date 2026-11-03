@@ -3,7 +3,7 @@ import test from "node:test";
 import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
 import { buildCampaignReport } from "../lib/campaigns/campaign-engine.ts";
 import { buildExportPlan } from "../lib/export/xlsx-export.ts";
-import { extractArchiveWorkbooks, fingerprintBytes, isSafeArchivePath, isSupportedWorkbookPath } from "../lib/recycling/archive-import.ts";
+import { extractArchiveWorkbooks, fingerprintBytes, importIdFromFingerprint, isSafeArchivePath, isSupportedWorkbookPath } from "../lib/recycling/archive-import.ts";
 import JSZip from "jszip";
 
 const headers = ["Fecha", "Telefono Movil", "Tipificacion", "Usado"];
@@ -69,6 +69,8 @@ test("detecta ZIP vacío y duplicados de contenido de forma estable", async () =
  assert.ok(emptyResult.rejected.some((issue)=>issue.reason.includes("no contiene")));
  const bytes=new Uint8Array([8,9,10]).buffer;
  assert.equal(await fingerprintBytes(bytes),await fingerprintBytes(bytes.slice(0)));
+  assert.equal(importIdFromFingerprint("a".repeat(64)), "aaaaaaaa-aaaa-5aaa-8aaa-aaaaaaaaaaaa");
+  assert.throws(() => importIdFromFingerprint("invalida"), /Huella/);
 });
 
 test("informa un ZIP corrupto sin impedir que otra fuente se procese", async () => {

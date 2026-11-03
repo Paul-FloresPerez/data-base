@@ -50,6 +50,17 @@ export async function fingerprintBytes(bytes: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Derives a stable UUID-shaped import identifier from the content hash. This
+ * lets a repeated historical CRM file remain the same append-only source
+ * without relying on its name, folder, or the browser session.
+ */
+export function importIdFromFingerprint(fingerprint: string): string {
+  const value = fingerprint.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(value)) throw new Error("Huella de archivo no válida.");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-5${value.slice(13, 16)}-8${value.slice(17, 20)}-${value.slice(20, 32)}`;
+}
+
 export async function extractArchiveWorkbooks(
   zipName: string,
   bytes: ArrayBuffer,

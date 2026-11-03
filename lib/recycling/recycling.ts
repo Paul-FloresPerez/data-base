@@ -7,9 +7,9 @@ export const followUpTipifications = ["AGENDADO"] as const;
 export const knownTipifications = [...candidateTipifications, ...followUpTipifications, "LLAMARA A SU COMPAÑIA", "CONOCE EL METODO", "IRA A TIENDA", "OPERADOR INCORRECTO", "DESCONFIA DE LA LLAMADA", "TITULAR INCORRECTO"] as const;
 
 export type RecyclingBucket = "candidato" | "seguimiento" | "revision" | "bloqueado";
-export interface RecyclingInput { fileName: string; zipName?: string; internalPath?: string; sheetName?: string; columns: string[]; rows: string[][] }
+export interface RecyclingInput { fileName: string; importId?: string; zipName?: string; internalPath?: string; sheetName?: string; columns: string[]; rows: string[][] }
 export interface RecyclingRecord { mobile: string; sourceRow: number; originRow: number; sheetName: string; cells: string[]; fileName: string; zipName?: string; internalPath?: string; date: string; tipification: string; confirmedSale: boolean; saleAmbiguous: boolean; saleEvidence?: string; bucket: RecyclingBucket; reviewReason?: string }
-export interface RecyclingConciliationRow { fileKey: string; fileName: string; sourceRow: number; mobile: string }
+export interface RecyclingConciliationRow { fileKey: string; importId?: string; fileName: string; sourceRow: number; mobile: string }
 export interface RecyclingAnalysis { columns: string[]; records: RecyclingRecord[]; winners: RecyclingRecord[]; counts: Record<RecyclingBucket | "duplicados" | "moviles", number>; tipifications: Record<string, number>; files: string[]; conciliationRows: RecyclingConciliationRow[] }
 
 const aliases: Record<string, string[]> = {
@@ -40,7 +40,7 @@ export function analyzeRecyclingFiles(inputs: RecyclingInput[]): RecyclingAnalys
     const mobileIndex = column(input.columns, "mobile"), tipIndex = column(input.columns, "tipification"), dateIndex = column(input.columns, "date"), blockIndex = column(input.columns, "opposition"), confirmedSaleIndex = column(input.columns, "confirmedSale"), ambiguousSaleIndex = column(input.columns, "ambiguousSale");
     const fileKey = `${input.zipName ?? ""}|${input.internalPath ?? ""}|${input.fileName}`;
     for (const [index, cells] of input.rows.entries()) {
-      conciliationRows.push({ fileKey, fileName: input.fileName, sourceRow: index + 2, mobile: cells[mobileIndex] ?? "" });
+      conciliationRows.push({ fileKey, importId: input.importId, fileName: input.fileName, sourceRow: index + 2, mobile: cells[mobileIndex] ?? "" });
       const mobile = normalizeSpanishMobile(cells[mobileIndex] ?? ""); if (!mobile) continue;
       const tipification = (cells[tipIndex] ?? "").trim().toLocaleUpperCase("es-ES"); const known = knownTipifications.includes(tipification as never);
       const confirmedSale = confirmedSaleIndex >= 0 && isConfirmedSale(cells[confirmedSaleIndex] ?? "");

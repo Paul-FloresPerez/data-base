@@ -6,6 +6,7 @@ import { normalizeSpanishMobile } from "@/lib/excel/cleaning";
 import { portabilityDateForStorage } from "@/lib/excel/portability-date";
 import { evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification, type RecyclingCriteria } from "@/lib/recycling/intelligent-recycling";
 import { nextBaseCode } from "@/lib/server/base-code";
+import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
 import { prisma } from "@/lib/server/prisma";
 import { confirmedExternalSales } from "@/lib/server/sales-storage";
 import { conciliateCrmRows, type ConciliationRow, type ConciliationSummary } from "@/lib/recycling/conciliation";
@@ -167,12 +168,17 @@ export async function finalizeIntelligentRecycling(executionId: string, userId: 
       minimumMonths: 4,
       minimumDate: minimumPortabilityDate,
     };
-    const externallyBlocked = await confirmedExternalSales(records.flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []));
+    const mobiles = records.flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []);
+    const [externallyBlocked, activeReservations] = await Promise.all([
+      confirmedExternalSales(mobiles),
+      prisma.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
+    ]);
     const evaluation = evaluateIntelligentRecycling(
       records.map((record) => ({ id: record.id, mobile: record.movilNormalizado, portabilityDate: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null })),
       managements.map((management) => ({ id: management.id, mobile: management.movilNormalizado, managedAt: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificationOriginal: management.tipificacionOriginal, confirmedSale: management.ventaConfirmada, saleAmbiguous: Boolean((management.metadatos as { saleAmbiguous?: unknown }).saleAmbiguous), saleEvidence: management.evidenciaVenta })),
       criteria,
       externallyBlocked,
+      new Set(activeReservations.map((reservation) => reservation.movilNormalizado)),
     );
     await prisma.$transaction(async (tx) => {
       await tx.resultadoEjecucionReciclaje.createMany({ data: evaluation.decisions.map((decision) => ({ ejecucionId: executionId, registroOriginalId: decision.originalRecordId, gestionGanadoraId: decision.winningManagementId, estado: decision.decision, motivo: decision.reason })) });
@@ -250,6 +256,15 @@ export async function confirmIntelligentRecycling(executionId: string, userId: s
     if (original.tipo !== "ORIGINAL" || !metadataCompleted(original.metadatos)) throw new Error("La base original no está disponible para reciclaje.");
     const eligibleIds = new Set(execution.resultados.map((result) => result.registroOriginalId));
     const records = original.registros.filter((record) => eligibleIds.has(record.id));
+    const mobiles = records.flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []);
+    await lockCommercialMobiles(tx, mobiles);
+    const [confirmedSales, activeReservations] = await Promise.all([
+      tx.ventaExterna.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } }),
+      tx.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
+    ]);
+    if (confirmedSales.length || activeReservations.length) {
+      throw new Error("La elegibilidad cambió por una venta o reserva comercial activa; vuelve a evaluar el reciclaje.");
+    }
     const originalMetadata = original.metadatos as Record<string, unknown>;
     const recycledMetadata = {
       ...originalMetadata,

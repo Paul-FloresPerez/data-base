@@ -12,6 +12,18 @@ test("una venta confirmada bloquea una tipificación reciclable contradictoria",
   assert.equal(result.decisions[0]?.decision, "BLOQUEADO_VENTA");
 });
 
+test("una reserva comercial activa no vuelve elegible un móvil aunque su gestión y permanencia cumplan", () => {
+  const result = evaluateIntelligentRecycling(
+    [original("r1", "612345678", "2025-01-01")],
+    [management("m1", "612345678", "2025-06-02", "NO CONTESTA")],
+    criteria("2025-06-30"),
+    new Set(),
+    new Set(["612345678"]),
+  );
+  assert.equal(result.decisions[0]?.decision, "REVISION_CONFLICTO");
+  assert.match(result.decisions[0]?.reason ?? "", /Reserva comercial activa/);
+});
+
 test("un dato de venta ambiguo no se distribuye automáticamente", () => {
   const result = evaluateIntelligentRecycling([original("r1", "612345678", "2025-01-01")], [{ ...management("m1", "612345678", "2025-06-02", "NO CONTESTA"), saleAmbiguous: true }], criteria("2025-06-30"));
   assert.equal(result.decisions[0]?.decision, "REVISION_CONFLICTO");
@@ -67,5 +79,7 @@ test("la confirmación crea una única base derivada desde el snapshot del servi
   assert.match(storage, /data: \{ estado: "EVALUANDO" \}/);
   assert.match(storage, /baseRecicladaId: recycled\.id, estado: "BASE_GENERADA"/);
   assert.match(storage, /eligibleIds = new Set\(execution\.resultados/);
+  assert.match(storage, /lockCommercialMobiles\(tx, mobiles\)/);
+  assert.match(storage, /estado: "ACTIVA"/);
   assert.doesNotMatch(storage, /sozar|fetch\(/i);
 });

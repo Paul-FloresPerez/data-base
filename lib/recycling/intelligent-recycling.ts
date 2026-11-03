@@ -82,6 +82,7 @@ export function evaluateIntelligentRecycling(
   managements: readonly RecyclingManagement[],
   criteria: RecyclingCriteria,
   globallyBlockedMobiles: ReadonlySet<string> = new Set(),
+  activelyReservedMobiles: ReadonlySet<string> = new Set(),
 ): RecyclingEvaluation {
   const allowed = new Set(criteria.recyclableTipifications.map(normalizeRecyclingTipification));
   const byMobile = new Map<string, RecyclingManagement[]>();
@@ -113,6 +114,8 @@ export function evaluateIntelligentRecycling(
     let decision: RecyclingDecisionRecord;
     if (original.mobile && globallyBlockedMobiles.has(original.mobile)) {
       decision = { originalRecordId: original.id, decision: "BLOQUEADO_VENTA", reason: "Venta confirmada en registro comercial externo", winningManagementId: null };
+    } else if (original.mobile && activelyReservedMobiles.has(original.mobile)) {
+      decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Reserva comercial activa; requiere liberación explícita antes de reciclar", winningManagementId: null };
     } else if (sale) {
       decision = { originalRecordId: original.id, decision: "BLOQUEADO_VENTA", reason: sale.saleEvidence || "Venta confirmada en historial CRM", winningManagementId: sale.id };
     } else {
