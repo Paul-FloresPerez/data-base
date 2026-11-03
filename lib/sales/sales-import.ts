@@ -8,6 +8,14 @@ export type SalesColumnMapping = {
   campaign?: number;
 };
 
+export type SalesImportMode = "BASICA" | "AVANZADA";
+
+export type SalesMobileColumnDetection = {
+  candidates: number[];
+  selected: number | undefined;
+  ambiguous: boolean;
+};
+
 export type SalesImportRow = {
   sourceRow: number;
   cells: string[];
@@ -25,7 +33,7 @@ export type SalesEventPreview = {
 };
 
 const aliases = {
-  mobile: ["movil", "movilcliente", "telefonocelular", "telefono", "numero", "numeroemitido", "nemitido", "nums"],
+  mobile: ["movil", "movilcliente", "telefonocelular", "telefonomovil", "numeromovil", "telefono", "numero", "numeroemitido", "nemitido", "nums"],
   soldAt: ["fechaventa", "fecha", "fechaalta", "fechacontratacion"],
   status: ["estadoventa", "estado", "venta", "resultado", "situacion"],
   advisor: ["asesor", "asesorcomercial", "agente", "vendedor"],
@@ -40,14 +48,24 @@ function headerIndex(headers: readonly string[], candidates: readonly string[]) 
   return headers.findIndex((header) => candidates.includes(comparable(header)));
 }
 
+/**
+ * Select a mobile column only when one known header identifies it. A file
+ * with two matching headers must be resolved by the user; selecting the first
+ * column would silently block unrelated values.
+ */
+export function detectSalesMobileColumn(headers: readonly string[]): SalesMobileColumnDetection {
+  const candidates = headers.flatMap((header, index) => aliases.mobile.includes(comparable(header) as never) ? [index] : []);
+  return { candidates, selected: candidates.length === 1 ? candidates[0] : undefined, ambiguous: candidates.length > 1 };
+}
+
 export function suggestSalesColumnMapping(headers: readonly string[]): Partial<SalesColumnMapping> {
-  const mobile = headerIndex(headers, aliases.mobile);
+  const mobile = detectSalesMobileColumn(headers).selected;
   const soldAt = headerIndex(headers, aliases.soldAt);
   const status = headerIndex(headers, aliases.status);
   const advisor = headerIndex(headers, aliases.advisor);
   const campaign = headerIndex(headers, aliases.campaign);
   return {
-    ...(mobile >= 0 ? { mobile } : {}),
+    ...(mobile !== undefined ? { mobile } : {}),
     ...(soldAt >= 0 ? { soldAt } : {}),
     ...(status >= 0 ? { status } : {}),
     ...(advisor >= 0 ? { advisor } : {}),
@@ -67,7 +85,7 @@ function safeText(value: string | undefined) {
   return trimmed ? trimmed.slice(0, 500) : null;
 }
 
-export function previewSalesImport(rows: readonly SalesImportRow[], mapping: SalesColumnMapping) {
+export function previewSalesImport(rows: readonly SalesImportRow[], mapping: SalesColumnMapping, mode: SalesImportMode = "AVANZADA") {
   const seen = new Set<string>();
   const events: SalesEventPreview[] = [];
   for (const row of rows) {
@@ -76,16 +94,18 @@ export function previewSalesImport(rows: readonly SalesImportRow[], mapping: Sal
     const invalid = spanishMobileExclusionReason(rawMobile);
     const duplicated = normalized ? seen.has(normalized) : false;
     if (normalized) seen.add(normalized);
-    const statusText = row.cells[mapping.status ?? -1] ?? "";
+    const statusText = mode === "AVANZADA" ? row.cells[mapping.status ?? -1] ?? "" : "";
     events.push({
       sourceRow: row.sourceRow,
       mobile: normalized,
-      saleStatus: classifySaleStatus(statusText),
-      originalStatus: safeText(statusText) ?? "",
+      // The basic flow has no commercial-status dependency: every valid,
+      // unique mobile is a confirmed sale and therefore a permanent block.
+      saleStatus: mode === "BASICA" && normalized && !invalid && !duplicated ? "CONFIRMADA" : classifySaleStatus(statusText),
+      originalStatus: mode === "BASICA" ? "IMPORTACION_BASICA" : safeText(statusText) ?? "",
       reason: invalid ? "MOVIL_INVALIDO" : duplicated ? "MOVIL_DUPLICADO" : "VALIDA",
-      soldAt: safeText(row.cells[mapping.soldAt ?? -1]),
-      advisor: safeText(row.cells[mapping.advisor ?? -1]),
-      campaign: safeText(row.cells[mapping.campaign ?? -1]),
+      soldAt: mode === "AVANZADA" ? safeText(row.cells[mapping.soldAt ?? -1]) : null,
+      advisor: mode === "AVANZADA" ? safeText(row.cells[mapping.advisor ?? -1]) : null,
+      campaign: mode === "AVANZADA" ? safeText(row.cells[mapping.campaign ?? -1]) : null,
     });
   }
   const valid = events.filter((event) => event.reason === "VALIDA");
