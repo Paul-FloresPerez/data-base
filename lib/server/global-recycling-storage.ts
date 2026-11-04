@@ -3,11 +3,14 @@ import "server-only";
 import { Prisma } from "../../generated/prisma/client.ts";
 import { materialConflicts } from "../recycling/global-conciliation.ts";
 import { minimumPortabilityDate, normalizeRecyclingTipification } from "../recycling/intelligent-recycling.ts";
+import { buildCrmRecyclingOutput, CRM_RECYCLING_HEADERS } from "../export/crm-recycling-export.ts";
+import { nextBaseCode } from "./base-code.ts";
+import { lockCommercialMobiles } from "./commercial-locks.ts";
 import { prisma } from "./prisma.ts";
 
 const BASE_PAGE_SIZE = 250;
 const MOBILE_PAGE_SIZE = 250;
-export const GLOBAL_RECYCLING_RULE_VERSION = "2026-11-03.v1";
+export const GLOBAL_RECYCLING_RULE_VERSION = "2026-11-03.v2";
 
 export type GlobalRecyclingCriteria = {
   effectiveDate: string;
@@ -121,11 +124,18 @@ function decide(input: {
   criteria: ReturnType<typeof validateCriteria>;
 }): { decision: Decision; reason: string; sources: Prisma.InputJsonValue } {
   const sources = {
-    version: 1,
+    // v2 keeps non-personal comparison evidence, source IDs and management
+    // facts. It deliberately avoids copying names/documents into the snapshot.
+    version: 2,
     mobile: input.mobile,
-    records: input.records.map((record) => ({ recordId: record.id, baseId: record.baseId, baseCode: record.baseCode, sourceRow: record.sourceRow, provenance: record.provenance })),
-    canonicalRows: input.canonicalRows.map((row) => ({ rowId: row.id, archivoCrmId: row.archivoCrmId, hoja: row.hojaOrigen, fila: row.numeroFilaOrigen })),
-    legacyManagements: input.legacyManagements.map((management) => ({ managementId: management.id, archivoId: management.archivoId, fila: management.numeroFilaOrigen })),
+    records: input.records.map((record) => ({
+      recordId: record.id, baseId: record.baseId, baseCode: record.baseCode, sourceRow: record.sourceRow,
+      provenance: record.provenance, operadorActual: record.operadorActual,
+      fechaPortabilidad: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null,
+      documentoPresente: Boolean(record.documento), identidadPresente: Boolean(record.nombre),
+    })),
+    canonicalRows: input.canonicalRows.map((row) => ({ rowId: row.id, archivoCrmId: row.archivoCrmId, hoja: row.hojaOrigen, fila: row.numeroFilaOrigen, fechaGestion: row.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(row.tipificacionOriginal), ventaConfirmada: row.ventaConfirmada })),
+    legacyManagements: input.legacyManagements.map((management) => ({ managementId: management.id, archivoId: management.archivoId, fila: management.numeroFilaOrigen, fechaGestion: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(management.tipificacionOriginal), ventaConfirmada: management.ventaConfirmada, ventaAmbigua: saleAmbiguous(management.metadatos) })),
   } as Prisma.InputJsonValue;
   if (input.blocked) return { decision: "BLOQUEADO", reason: "Venta confirmada en registro comercial externo", sources };
   if (input.reserved) return { decision: "REVISION", reason: "Reserva comercial activa; requiere liberación explícita", sources };
@@ -233,6 +243,144 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
     return { id: executionId, status: "EVALUADA" as const, reused: false, summary: frozenSummary };
   } catch (error) {
     await prisma.ejecucionReciclajeGlobal.updateMany({ where: { id: executionId, estado: "EVALUANDO" }, data: { estado: "ERROR" } });
+    throw error;
+  }
+}
+
+type DecisionSource = { version?: unknown; records?: unknown };
+
+function sourceEvidence(value: unknown): { version: number; records: { recordId: string }[] } | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as DecisionSource;
+  if (candidate.version !== 2 || !Array.isArray(candidate.records)) return null;
+  const records = candidate.records.flatMap((item) => item && typeof item === "object" && typeof (item as { recordId?: unknown }).recordId === "string"
+    ? [{ recordId: (item as { recordId: string }).recordId }]
+    : []);
+  return records.length ? { version: 2, records } : null;
+}
+
+function crmCells(record: { datosOriginales: unknown; movilNormalizado: string | null }, metadata: unknown) {
+  const stored = record.datosOriginales && typeof record.datosOriginales === "object" ? record.datosOriginales as { cells?: unknown; enrichedCells?: unknown; mobile?: unknown; contactPhone?: unknown } : {};
+  const base = metadata && typeof metadata === "object" ? metadata as { columns?: unknown; enrichmentColumns?: unknown } : {};
+  const enrichedColumns = Array.isArray(base.enrichmentColumns) ? base.enrichmentColumns.filter((x): x is string => typeof x === "string") : [];
+  const originalColumns = Array.isArray(base.columns) ? base.columns.filter((x): x is string => typeof x === "string") : [];
+  const enrichedCells = Array.isArray(stored.enrichedCells) ? stored.enrichedCells.map(String) : [];
+  const cells = enrichedColumns.length && enrichedCells.length ? enrichedCells : Array.isArray(stored.cells) ? stored.cells.map(String) : [];
+  const columns = enrichedColumns.length && enrichedCells.length ? enrichedColumns : originalColumns;
+  const output = buildCrmRecyclingOutput({ columns, rows: [{ sourceRow: 1, cells }] });
+  const projected = output.rows[0]?.cells ?? Array.from({ length: CRM_RECYCLING_HEADERS.length }, () => "");
+  if (!projected[0]) projected[0] = record.movilNormalizado ?? String(stored.mobile ?? "");
+  if (!projected[1]) projected[1] = String(stored.contactPhone ?? "");
+  return projected;
+}
+
+function generationMetadata(executionId: string, sources: readonly { baseId: string; recordId: string; sourceRow: number }[]) {
+  return {
+    version: 1, completed: true, revision: null,
+    originalFileName: `RECICLAJE_GLOBAL_${executionId}.xlsx`,
+    columns: [...CRM_RECYCLING_HEADERS], columnMapping: { movil: 0, enriched: {} },
+    enrichmentColumns: [...CRM_RECYCLING_HEADERS], enrichmentMode: "preserve",
+    campaignFilters: { includeUnknown: false }, distribution: { selectedCampaigns: [], batchSize: 100 },
+    enrichmentSource: "crm", kind: "RECICLADA", operationalSourceRows: sources.map((source) => source.sourceRow),
+    globalRecyclingExecutionId: executionId, globalSources: sources,
+  };
+}
+
+/** Paged administrative listing; it deliberately returns counters, not CRM rows. */
+export async function listGlobalRecyclingExecutions(input: { page?: number; limit?: number }) {
+  const page = Math.max(0, Math.min(input.page ?? 0, 10_000));
+  const limit = Math.max(1, Math.min(input.limit ?? 25, 100));
+  const [total, rows] = await Promise.all([
+    prisma.ejecucionReciclajeGlobal.count(),
+    prisma.ejecucionReciclajeGlobal.findMany({
+      orderBy: { creadoEn: "desc" }, skip: page * limit, take: limit,
+      select: { id: true, estado: true, versionReglas: true, criterios: true, resumen: true, creadoEn: true, evaluadoEn: true, baseRecicladaId: true, usuario: { select: { username: true } }, _count: { select: { decisiones: true, archivos: true, bases: true, resultadosGeneracion: true } } },
+    }),
+  ]);
+  return { total, page, limit, executions: rows.map((row) => ({ id: row.id, status: row.estado, ruleVersion: row.versionReglas, criteria: row.criterios, summary: row.resumen, createdAt: row.creadoEn.toISOString(), evaluatedAt: row.evaluadoEn?.toISOString() ?? null, recycledBaseId: row.baseRecicladaId, user: row.usuario.username, files: row._count.archivos, bases: row._count.bases, decisions: row._count.decisiones, generationResults: row._count.resultadosGeneracion })) };
+}
+
+export async function getGlobalRecyclingExecution(executionId: string, input: { cursor?: string; limit?: number }) {
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 100));
+  const execution = await prisma.ejecucionReciclajeGlobal.findUnique({
+    where: { id: executionId },
+    select: { id: true, estado: true, versionReglas: true, criterios: true, resumen: true, creadoEn: true, evaluadoEn: true, baseRecicladaId: true, usuario: { select: { username: true } }, archivos: { select: { id: true, nombreArchivo: true, importacionId: true } }, _count: { select: { bases: true, decisiones: true } } },
+  });
+  if (!execution) return null;
+  const decisions = await prisma.decisionEjecucionReciclajeGlobal.findMany({
+    where: { ejecucionId: executionId, ...(input.cursor ? { movilNormalizado: { gt: input.cursor } } : {}) }, orderBy: { movilNormalizado: "asc" }, take: limit + 1,
+    select: { movilNormalizado: true, decision: true, motivo: true, fuentes: true, creadoEn: true },
+  });
+  const rows = decisions.slice(0, limit);
+  return { id: execution.id, status: execution.estado, ruleVersion: execution.versionReglas, criteria: execution.criterios, summary: execution.resumen, createdAt: execution.creadoEn.toISOString(), evaluatedAt: execution.evaluadoEn?.toISOString() ?? null, recycledBaseId: execution.baseRecicladaId, user: execution.usuario.username, files: execution.archivos, bases: execution._count.bases, decisions: rows.map((row) => ({ mobileMasked: `${row.movilNormalizado.slice(0, 3)}••••${row.movilNormalizado.slice(-2)}`, decision: row.decision, reason: row.motivo, evidence: row.fuentes, createdAt: row.creadoEn.toISOString() })), nextCursor: decisions.length > limit ? rows.at(-1)?.movilNormalizado ?? null : null };
+}
+
+/** Final server-side confirmation. It creates no lots, reservations or sales. */
+export async function generateGlobalRecycledBase(input: { executionId: string; userId: string }) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+    const execution = await tx.ejecucionReciclajeGlobal.findUnique({ where: { id: input.executionId }, select: { id: true, estado: true, usuarioId: true, baseRecicladaId: true, fechaEfectiva: true, criterios: true } });
+    if (!execution) throw new Error("La ejecución global no existe.");
+    if (execution.baseRecicladaId) return { baseId: execution.baseRecicladaId, reused: true, included: 0, excludedChanged: 0 };
+    const user = await tx.usuario.findUnique({ where: { id: input.userId }, select: { activo: true } });
+    if (!user?.activo) throw new Error("El administrador no está disponible.");
+    if (execution.estado === "ERROR") throw new Error("La ejecución tiene un error histórico; crea una nueva ejecución explícita.");
+    const claimed = await tx.ejecucionReciclajeGlobal.updateMany({ where: { id: input.executionId, estado: "EVALUADA", baseRecicladaId: null }, data: { estado: "EVALUANDO" } });
+    if (claimed.count !== 1) {
+      const latest = await tx.ejecucionReciclajeGlobal.findUnique({ where: { id: input.executionId }, select: { baseRecicladaId: true, estado: true } });
+      if (latest?.baseRecicladaId) return { baseId: latest.baseRecicladaId, reused: true, included: 0, excludedChanged: 0 };
+      throw new Error(latest?.estado === "ERROR" ? "La ejecución tiene un error histórico; crea una nueva ejecución explícita." : "La ejecución global no está lista para generar una base.");
+    }
+      const decisions = await tx.decisionEjecucionReciclajeGlobal.findMany({ where: { ejecucionId: input.executionId, decision: "ELEGIBLE" }, orderBy: { movilNormalizado: "asc" } });
+      if (!decisions.length) {
+        await tx.ejecucionReciclajeGlobal.update({ where: { id: input.executionId }, data: { estado: "EVALUADA" } });
+        return { baseId: null, reused: false, included: 0, excludedChanged: 0 };
+      }
+      await lockCommercialMobiles(tx, decisions.map((row) => row.movilNormalizado));
+      const mobiles = decisions.map((row) => row.movilNormalizado);
+      const [sales, reservations] = await Promise.all([
+        tx.ventaExterna.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } }),
+        tx.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
+      ]);
+      const sold = new Set(sales.map((row) => row.movilNormalizado)); const reserved = new Set(reservations.map((row) => row.movilNormalizado));
+      const sourceIds = decisions.flatMap((decision) => sourceEvidence(decision.fuentes)?.records.map((record) => record.recordId) ?? []);
+      const records = await tx.registro.findMany({ where: { id: { in: sourceIds }, tipificacion: "VALIDO", base: { is: { tipo: "ORIGINAL" } } }, select: { id: true, baseId: true, numeroFilaOriginal: true, movilNormalizado: true, documento: true, nombre: true, operadorActual: true, operadorOriginal: true, fechaPortabilidad: true, tipificacion: true, datosOriginales: true, base: { select: { codigo: true, nombreDescriptivo: true, nombreOriginal: true, fechaRecepcion: true, metadatos: true } } } });
+      const byMobile = new Map<string, typeof records>();
+      for (const record of records) if (record.movilNormalizado) byMobile.set(record.movilNormalizado, [...(byMobile.get(record.movilNormalizado) ?? []), record]);
+      const included: typeof records = []; const outcomes: { movilNormalizado: string; estado: "INCLUIDO" | "EXCLUIDO_CAMBIO"; motivo: string; procedencias: Prisma.InputJsonValue }[] = [];
+      for (const decision of decisions) {
+        const candidates = (byMobile.get(decision.movilNormalizado) ?? []).sort((a, b) => a.base.codigo.localeCompare(b.base.codigo) || a.numeroFilaOriginal - b.numeroFilaOriginal || a.id.localeCompare(b.id));
+        let reason: string | null = sold.has(decision.movilNormalizado) ? "Venta confirmada desde la evaluación" : reserved.has(decision.movilNormalizado) ? "Reserva comercial activa desde la evaluación" : null;
+        const snapshot = sourceEvidence(decision.fuentes);
+        if (!reason && !snapshot) reason = "Snapshot RG-3 sin evidencia v2; crea una nueva ejecución";
+        if (!reason && !candidates.length) reason = "Registro original ya no está disponible";
+        if (!reason) {
+          const conflicts = materialConflicts(candidates.map((record) => ({ documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: provenance(record.datosOriginales) })));
+          if (conflicts.length) reason = `Contradicción material al confirmar: ${conflicts.join(", ")}`;
+          else if (candidates.every((record) => provenance(record.datosOriginales) === "MOCK")) reason = "Solo existe enriquecimiento MOCK; no es evidencia comercial definitiva";
+        }
+        const sources = candidates.map((record) => ({ baseId: record.baseId, baseCode: record.base.codigo, recordId: record.id, sourceRow: record.numeroFilaOriginal }));
+        if (reason) outcomes.push({ movilNormalizado: decision.movilNormalizado, estado: "EXCLUIDO_CAMBIO", motivo: reason, procedencias: { version: 1, sources } });
+        else { const selected = candidates[0]!; included.push(selected); outcomes.push({ movilNormalizado: decision.movilNormalizado, estado: "INCLUIDO", motivo: "Revalidado al confirmar", procedencias: { version: 1, sources } }); }
+      }
+      await tx.resultadoGeneracionReciclajeGlobal.createMany({ data: outcomes.map((outcome) => ({ ejecucionId: input.executionId, ...outcome })), skipDuplicates: true });
+      if (!included.length) { await tx.ejecucionReciclajeGlobal.update({ where: { id: input.executionId }, data: { estado: "EVALUADA" } }); return { baseId: null, reused: false, included: 0, excludedChanged: outcomes.length }; }
+      const sourceSummary = included.map((record) => ({ baseId: record.baseId, recordId: record.id, sourceRow: record.numeroFilaOriginal }));
+      const meta = generationMetadata(input.executionId, sourceSummary);
+      const code = await nextBaseCode(tx, execution.fechaEfectiva);
+      const base = await tx.base.create({ data: { codigo: code, nombreOriginal: meta.originalFileName, nombreDescriptivo: `Reciclada global · ${execution.fechaEfectiva.toISOString().slice(0, 10)}`, fechaRecepcion: execution.fechaEfectiva, tipo: "RECICLADA", estado: "LISTA_PARA_DISTRIBUIR", cantidadImportados: included.length, cantidadValidos: included.length, cantidadExcluidos: 0, metadatos: meta as unknown as Prisma.InputJsonValue } });
+      await tx.registro.createMany({ data: included.map((record, index) => { const cells = crmCells(record, record.base.metadatos); return { baseId: base.id, numeroFilaOriginal: index + 2, movilNormalizado: record.movilNormalizado, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, operadorOriginal: record.operadorOriginal, fechaPortabilidad: record.fechaPortabilidad, tipificacion: record.tipificacion, datosOriginales: { version: 1, cells, mobile: cells[0] ?? "", contactPhone: cells[1] ?? "", reason: null, enrichedCells: cells, provenance: provenance(record.datosOriginales), globalSource: { baseId: record.baseId, baseCode: record.base.codigo, recordId: record.id, sourceRow: record.numeroFilaOriginal }, sourceOriginal: record.datosOriginales } as Prisma.InputJsonValue }; }) });
+      await tx.ejecucionReciclajeGlobal.update({ where: { id: input.executionId }, data: { baseRecicladaId: base.id, generadoEn: new Date(), estado: "EVALUADA" } });
+      await tx.eventoAuditoria.createMany({ data: [{ operacionId: `reciclaje-global:${input.executionId}:base-generada`, accion: "BASE_RECICLADA", usuarioId: input.userId, baseId: base.id, cantidad: included.length, metadatos: { executionId: input.executionId, kind: "GLOBAL", excludedChanged: outcomes.filter((outcome) => outcome.estado === "EXCLUIDO_CAMBIO").length } }], skipDuplicates: true });
+      return { baseId: base.id, reused: false, included: included.length, excludedChanged: outcomes.filter((outcome) => outcome.estado === "EXCLUIDO_CAMBIO").length };
+    });
+  } catch (error) {
+    // This update intentionally runs after the failed transaction rolls back,
+    // so ERROR is durable and the execution is never silently resumed.
+    const latest = await prisma.ejecucionReciclajeGlobal.findUnique({ where: { id: input.executionId }, select: { baseRecicladaId: true, resumen: true } });
+    if (latest?.baseRecicladaId) return { baseId: latest.baseRecicladaId, reused: true, included: 0, excludedChanged: 0 };
+    const previousSummary = latest?.resumen && typeof latest.resumen === "object" ? latest.resumen as Record<string, unknown> : {};
+    await prisma.ejecucionReciclajeGlobal.updateMany({ where: { id: input.executionId, estado: "EVALUANDO", baseRecicladaId: null }, data: { estado: "ERROR", resumen: { ...previousSummary, generation: { status: "ERROR", code: "GENERACION_FALLIDA" } } as Prisma.InputJsonValue } });
     throw error;
   }
 }

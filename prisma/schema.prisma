@@ -136,6 +136,7 @@ model Base {
   archivosTipificaciones ArchivoTipificaciones[]
   asociacionesArchivosCrm ArchivoCrmBase[] @relation("ArchivoCrmBaseOriginal")
   ejecucionesReciclajeGlobal EjecucionReciclajeGlobalBase[]
+  ejecucionGlobalGeneradora EjecucionReciclajeGlobal? @relation("BaseRecicladaGlobal")
   ejecucionesReciclaje EjecucionReciclaje[]
   ejecucionGeneradora EjecucionReciclaje? @relation("BaseReciclada")
   gestionesTipificacion GestionTipificacion[]
@@ -293,14 +294,40 @@ model EjecucionReciclajeGlobal {
   resumen         Json?
   creadoEn        DateTime                       @default(now()) @map("creado_en")
   evaluadoEn      DateTime?                      @map("evaluado_en")
+  baseRecicladaId String?                         @unique @map("base_reciclada_id") @db.Uuid
+  generadoEn      DateTime?                       @map("generado_en")
   usuario         Usuario                        @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
   archivos        EjecucionReciclajeGlobalArchivo[]
   bases           EjecucionReciclajeGlobalBase[]
   decisiones      DecisionEjecucionReciclajeGlobal[]
+  baseReciclada   Base?                           @relation("BaseRecicladaGlobal", fields: [baseRecicladaId], references: [id], onDelete: Restrict)
+  resultadosGeneracion ResultadoGeneracionReciclajeGlobal[]
 
   @@index([usuarioId, creadoEn])
   @@index([estado, creadoEn])
   @@map("ejecuciones_reciclajes_globales")
+}
+
+enum EstadoResultadoGeneracionReciclajeGlobal {
+  INCLUIDO
+  EXCLUIDO_CAMBIO
+}
+
+/// Immutable outcome of the final, transactional revalidation before a global
+/// recycled base is generated. It never changes the RG-3 decision snapshot.
+model ResultadoGeneracionReciclajeGlobal {
+  id              String                                  @id @default(uuid()) @db.Uuid
+  ejecucionId     String                                  @map("ejecucion_id") @db.Uuid
+  movilNormalizado String                                 @map("movil_normalizado")
+  estado          EstadoResultadoGeneracionReciclajeGlobal
+  motivo          String
+  procedencias    Json
+  creadoEn        DateTime                                @default(now()) @map("creado_en")
+  ejecucion       EjecucionReciclajeGlobal                @relation(fields: [ejecucionId], references: [id], onDelete: Restrict)
+
+  @@unique([ejecucionId, movilNormalizado])
+  @@index([ejecucionId, estado])
+  @@map("resultados_generaciones_reciclajes_globales")
 }
 
 /// File membership and immutable source metadata for a global execution.

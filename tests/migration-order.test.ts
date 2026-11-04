@@ -18,6 +18,7 @@ const expected = [
   "20261104090000_add_canonical_crm_files",
   "20261104100000_add_global_crm_mobile_lookup_index",
   "20261104110000_add_global_recycling_execution",
+  "20261104120000_add_global_recycled_base_generation",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -61,4 +62,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[11]!, /CREATE TABLE "ejecuciones_reciclajes_globales"/);
   assert.match(sql[11]!, /CREATE TABLE "decisiones_ejecuciones_reciclajes_globales"/);
   assert.doesNotMatch(sql[11]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[12]!, /CREATE TABLE "resultados_generaciones_reciclajes_globales"/);
+  assert.match(sql[12]!, /ADD COLUMN "base_reciclada_id" UUID/);
+  assert.doesNotMatch(sql[12]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });
