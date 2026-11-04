@@ -28,6 +28,7 @@
     "db:exercise-external-sales-test": "node --conditions=react-server --experimental-strip-types scripts/exercise-external-sales-test.ts",
     "db:exercise-complete-base-save-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-complete-base-save-test.ts",
     "db:exercise-commercial-reservations-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-commercial-reservations-test.ts",
+    "db:exercise-commercial-circuit": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-commercial-circuit.ts",
     "db:exercise-processing-jobs-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-processing-jobs-test.ts",
     "postinstall": "prisma generate"
   },

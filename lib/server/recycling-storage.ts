@@ -158,7 +158,7 @@ export async function finalizeIntelligentRecycling(executionId: string, userId: 
   if (claimed.count !== 1) throw new Error("La ejecución ya está siendo evaluada.");
   try {
     const [records, managements] = await Promise.all([
-      prisma.registro.findMany({ where: { baseId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaPortabilidad: true } }),
+      prisma.registro.findMany({ where: { baseId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaPortabilidad: true, tipificacion: true } }),
       prisma.gestionTipificacion.findMany({ where: { baseOriginalId: execution.baseOriginalId }, select: { id: true, movilNormalizado: true, fechaGestion: true, tipificacionOriginal: true, ventaConfirmada: true, evidenciaVenta: true, metadatos: true } }),
     ]);
     const storedCriteria = (execution.metadatos as { criteria?: Partial<RecyclingCriteria> }).criteria;
@@ -174,7 +174,7 @@ export async function finalizeIntelligentRecycling(executionId: string, userId: 
       prisma.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
     ]);
     const evaluation = evaluateIntelligentRecycling(
-      records.map((record) => ({ id: record.id, mobile: record.movilNormalizado, portabilityDate: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null })),
+      records.filter((record) => record.tipificacion === "VALIDO").map((record) => ({ id: record.id, mobile: record.movilNormalizado, portabilityDate: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null })),
       managements.map((management) => ({ id: management.id, mobile: management.movilNormalizado, managedAt: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificationOriginal: management.tipificacionOriginal, confirmedSale: management.ventaConfirmada, saleAmbiguous: Boolean((management.metadatos as { saleAmbiguous?: unknown }).saleAmbiguous), saleEvidence: management.evidenciaVenta })),
       criteria,
       externallyBlocked,

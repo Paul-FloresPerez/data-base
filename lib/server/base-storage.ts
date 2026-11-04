@@ -24,6 +24,21 @@ function receiptDate(value: string | null): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+/** JSONB does not preserve property insertion order; compare the immutable row
+ * payload structurally so re-opening a generated recycled base is not rejected
+ * merely because PostgreSQL returned the same object with a different key order. */
+function sameStoredOriginalRow(value: unknown, record: StoredRecord): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const original = value as Record<string, unknown>;
+  return original.version === 1
+    && JSON.stringify(original.cells) === JSON.stringify(record.cells)
+    && original.mobile === record.mobile
+    && original.contactPhone === record.contactPhone
+    && original.reason === record.reason
+    && JSON.stringify(original.enrichedCells) === JSON.stringify(record.enrichedCells)
+    && original.provenance === record.provenance;
+}
+
 export async function beginBaseSave(input: SaveStartPayload) {
   const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true } });
   const old = metadata(existing?.metadatos);
@@ -47,7 +62,8 @@ export async function beginBaseSave(input: SaveStartPayload) {
     const receivedAt = receiptDate(input.receivedAt);
     await prisma.$transaction(async (transaction) => {
       if (existing) {
-        if (old?.completed) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
+        const generatedRecycledBase = existing.tipo === "RECICLADA" && old?.completed && Boolean(old.recyclingExecutionId);
+        if (old?.completed && !generatedRecycledBase) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
         await transaction.lote.deleteMany({ where: { baseId: input.id } });
         // A completed base is immutable at the source-row level. Upserts in
         // saveRecordChunk enrich those same records without erasing their
@@ -85,7 +101,7 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
   const existingByRow = new Map(existing.map((record) => [record.numeroFilaOriginal, record.datosOriginales]));
   for (const record of records) {
     const previous = existingByRow.get(record.sourceRow);
-    if (previous && JSON.stringify(previous) !== JSON.stringify({ version: 1, cells: record.cells, mobile: record.mobile, contactPhone: record.contactPhone, reason: record.reason, enrichedCells: record.enrichedCells, provenance: record.provenance })) {
+    if (previous && !sameStoredOriginalRow(previous, record)) {
       throw new Error("Una fila ya guardada no puede cambiar dentro de la misma revisión.");
     }
   }
