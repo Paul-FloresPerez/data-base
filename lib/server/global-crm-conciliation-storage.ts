@@ -141,6 +141,7 @@ export async function previewGlobalCrmConciliation(input: { archivoCrmId: string
         tipificacion: "VALIDO",
         base: { is: {
           tipo: "ORIGINAL",
+          archivadaEn: null,
           estado: { not: "LISTA_PARA_LIMPIAR" },
           cantidadValidos: { gt: 0 },
           metadatos: { path: ["completed"], equals: true },

@@ -61,7 +61,7 @@ async function snapshotOriginalBases(executionId: string) {
   let total = 0;
   do {
     const bases = await prisma.base.findMany({
-      where: { tipo: "ORIGINAL", estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
+      where: { tipo: "ORIGINAL", archivadaEn: null, estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
       select: { id: true, codigo: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, fechaRecepcion: true, estado: true, tipo: true, metadatos: true },
       orderBy: { id: "asc" }, take: BASE_PAGE_SIZE, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });

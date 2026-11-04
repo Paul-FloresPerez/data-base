@@ -39,6 +39,8 @@ enum AccionAuditoria {
   ENTREGA_CONFIRMADA
   RESERVAS_CREADAS
   RESERVA_LIBERADA
+  BASE_ARCHIVADA
+  BASE_RESTAURADA
 }
 
 enum EstadoExportacion {
@@ -128,6 +130,9 @@ model Base {
   cantidadValidos     Int        @default(0) @map("cantidad_validos")
   cantidadExcluidos   Int        @default(0) @map("cantidad_excluidos")
   metadatos           Json
+  archivadaEn         DateTime?  @map("archivada_en")
+  archivadaPorUsuarioId String?  @map("archivada_por_usuario_id") @db.Uuid
+  motivoArchivado     String?    @map("motivo_archivado")
   registros           Registro[]
   baseOriginal        Base?      @relation("BaseOriginal", fields: [baseOriginalId], references: [id], onDelete: Restrict)
   basesDerivadas      Base[]     @relation("BaseOriginal")
@@ -146,10 +151,12 @@ model Base {
   destinosHlr         ConsultaHlrRegistro[]
   reservasComerciales ReservaComercial[]
   trabajosProcesamiento TrabajoProcesamiento[]
+  archivadaPor         Usuario?  @relation("BaseArchivador", fields: [archivadaPorUsuarioId], references: [id], onDelete: Restrict)
 
   @@index([estado])
   @@index([tipo, fechaRecepcion])
   @@index([baseOriginalId])
+  @@index([archivadaEn])
   @@map("bases")
 }
 
@@ -575,6 +582,7 @@ model Usuario {
   reservasCreadas ReservaComercial[] @relation("ReservaCreador")
   reservasLiberadas ReservaComercial[] @relation("ReservaLiberador")
   trabajosProcesamiento TrabajoProcesamiento[]
+  basesArchivadas       Base[]     @relation("BaseArchivador")
 
   @@map("usuarios")
 }

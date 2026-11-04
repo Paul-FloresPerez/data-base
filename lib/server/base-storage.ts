@@ -40,9 +40,10 @@ function sameStoredOriginalRow(value: unknown, record: StoredRecord): boolean {
 }
 
 export async function beginBaseSave(input: SaveStartPayload) {
-  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true, estado: true, _count: { select: { lotes: true } } } });
+  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true, estado: true, archivadaEn: true, _count: { select: { lotes: true } } } });
   const old = metadata(existing?.metadatos);
   const nextMetadata: StoredMetadata = { ...input.metadata, revision: input.revision, completed: false };
+  if (existing?.archivadaEn) throw new Error("La base está archivada y no admite cambios operativos.");
   if (input.state === "LISTA_PARA_LIMPIAR" && (input.validRecords !== 0 || input.excludedRecords !== 0)) {
     throw new Error("Una base sin limpieza no puede declarar recuentos operativos.");
   }
@@ -102,8 +103,9 @@ export async function beginBaseSave(input: SaveStartPayload) {
 }
 
 export async function saveRecordChunk(baseId: string, revision: string, records: StoredRecord[]) {
-  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, estado: true } });
+  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, estado: true, archivadaEn: true } });
   const baseMetadata = metadata(base?.metadatos);
+  if (base?.archivadaEn) throw new Error("La base está archivada y no admite cambios operativos.");
   if (!baseMetadata || baseMetadata.completed || baseMetadata.revision !== revision) return false;
   assertIncomingRecordIntegrity(records, baseMetadata.columnMapping);
   const existing = await prisma.registro.findMany({ where: { baseId, numeroFilaOriginal: { in: records.map((record) => record.sourceRow) } }, select: { numeroFilaOriginal: true, datosOriginales: true } });
@@ -132,9 +134,10 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
 }
 
 export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[], userId: string) {
-  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true } });
+  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true, archivadaEn: true } });
   const baseMetadata = metadata(base?.metadatos);
   if (!base || !baseMetadata || baseMetadata.revision !== revision) return false;
+  if (base.archivadaEn) throw new Error("La base está archivada y no admite distribución ni guardado operativo.");
   if (base.estado === "LISTA_PARA_LIMPIAR") {
     throw new Error("Completa la limpieza antes de guardar la base en el historial.");
   }
@@ -234,10 +237,10 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
 }
 
 export async function listSavedBases() {
-  const bases = await prisma.base.findMany({ orderBy: { actualizadoEn: "desc" }, select: { id: true, codigo: true, nombreOriginal: true, nombreDescriptivo: true, fechaRecepcion: true, tipo: true, baseOriginalId: true, creadoEn: true, actualizadoEn: true, estado: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, metadatos: true } });
+  const bases = await prisma.base.findMany({ orderBy: { actualizadoEn: "desc" }, select: { id: true, codigo: true, nombreOriginal: true, nombreDescriptivo: true, fechaRecepcion: true, tipo: true, baseOriginalId: true, creadoEn: true, actualizadoEn: true, estado: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, metadatos: true, archivadaEn: true } });
   return bases.flatMap((base) => {
     const stored = metadata(base.metadatos);
-    return stored?.completed ? [{ id: base.id, code: base.codigo, name: base.nombreDescriptivo, originalFileName: base.nombreOriginal, receivedAt: base.fechaRecepcion?.toISOString().slice(0, 10) ?? null, originalBaseId: base.baseOriginalId, createdAt: base.creadoEn.toISOString(), updatedAt: base.actualizadoEn.toISOString(), state: base.estado, kind: base.tipo, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos }] : [];
+    return stored?.completed ? [{ id: base.id, code: base.codigo, name: base.nombreDescriptivo, originalFileName: base.nombreOriginal, receivedAt: base.fechaRecepcion?.toISOString().slice(0, 10) ?? null, originalBaseId: base.baseOriginalId, createdAt: base.creadoEn.toISOString(), updatedAt: base.actualizadoEn.toISOString(), archivedAt: base.archivadaEn?.toISOString() ?? null, state: base.estado, kind: base.tipo, imported: base.cantidadImportados, valid: base.cantidadValidos, excluded: base.cantidadExcluidos }] : [];
   });
 }
 
@@ -267,6 +270,7 @@ export async function searchOriginalBases(input: { query: string; page: number; 
       COUNT(*) OVER() AS total
     FROM bases
     WHERE tipo = 'ORIGINAL'
+      AND archivada_en IS NULL
       AND metadatos ->> 'completed' = 'true'
       AND estado <> 'LISTA_PARA_LIMPIAR'
       AND cantidad_validos > 0
@@ -289,7 +293,7 @@ export async function searchOriginalBases(input: { query: string; page: number; 
     kind: "ORIGINAL",
   });
   const selected = input.selectedId ? await prisma.base.findFirst({
-    where: { id: input.selectedId, tipo: "ORIGINAL", estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
+    where: { id: input.selectedId, tipo: "ORIGINAL", archivadaEn: null, estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
     select: { id: true, codigo: true, nombreOriginal: true, nombreDescriptivo: true, fechaRecepcion: true, cantidadImportados: true, estado: true },
   }) : null;
   return {

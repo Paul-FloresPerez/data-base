@@ -19,6 +19,7 @@ const expected = [
   "20261104100000_add_global_crm_mobile_lookup_index",
   "20261104110000_add_global_recycling_execution",
   "20261104120000_add_global_recycled_base_generation",
+  "20261105090000_add_base_logical_archive",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -65,4 +66,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[12]!, /CREATE TABLE "resultados_generaciones_reciclajes_globales"/);
   assert.match(sql[12]!, /ADD COLUMN "base_reciclada_id" UUID/);
   assert.doesNotMatch(sql[12]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[13]!, /ADD COLUMN "archivada_en"/);
+  assert.match(sql[13]!, /BASE_ARCHIVADA/);
+  assert.doesNotMatch(sql[13]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });

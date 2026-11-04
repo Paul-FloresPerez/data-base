@@ -20,6 +20,13 @@ async function append(transaction: Transaction, event: {
   }], skipDuplicates: true });
 }
 
+/** Append-only administrative lifecycle record; it deliberately contains no contact data. */
+export async function appendAdministrativeBaseEvent(transaction: Transaction, event: {
+  operationId: string; action: Extract<AccionAuditoria, "BASE_ARCHIVADA" | "BASE_RESTAURADA">; userId: string; baseId: string; metadata: Prisma.InputJsonValue;
+}) {
+  await append(transaction, { ...event, quantity: null });
+}
+
 /** Writes only aggregate, non-contact lifecycle events inside the base transaction. */
 export async function appendBaseLifecycleEvents(transaction: Transaction, input: { baseId: string; userId: string; metadata: StoredMetadata; imported: number; valid: number; excluded: number; lots: SavedLot[] }) {
   const baseEvent = await transaction.eventoAuditoria.findFirst({ where: { baseId: input.baseId, accion: input.metadata.kind === "RECICLADA" ? "BASE_RECICLADA" : "BASE_CREADA" }, select: { id: true } });

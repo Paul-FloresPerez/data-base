@@ -36,6 +36,7 @@
     "db:exercise-global-crm-conciliation": "node --conditions=react-server --experimental-strip-types scripts/exercise-global-crm-conciliation.ts",
     "db:exercise-global-recycling-execution": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-global-recycling-execution.ts",
     "db:exercise-global-recycling-generation": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-global-recycling-generation.ts",
+    "db:exercise-base-archive-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-base-archive-test.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

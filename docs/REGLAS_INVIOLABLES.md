@@ -101,6 +101,10 @@ requieren parametrización futura, evidencia auditada y pruebas de regresión.
    ninguna compilación, importación o prueba puede generar consultas pagadas.
 4. Las migraciones son incrementales. Nunca se usa `db push`, `reset` ni se
    modifica Production sin respaldo, destino validado y autorización.
+5. El archivado de una base es lógico, reversible y auditado. Nunca elimina
+   registros, gestiones, lotes, ventas ni reservas, y no libera reservas. Una
+   base archivada queda fuera de nuevos trabajos operativos, conciliación y
+   reciclaje global hasta su restauración administrativa explícita.
 
 ## Controles de regresión requeridos
 
