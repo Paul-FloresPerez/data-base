@@ -25,7 +25,10 @@ export async function POST(request: Request) {
     }
     const result = await beginIntelligentRecycling({ operationId: String(payload.operationId), baseOriginalId: String(payload.baseOriginalId), userId: session.user.id, criteria: { effectiveDate: String(criteria.effectiveDate), minimumDate: String(criteria.minimumDate), minimumMonths: 4, recyclableTipifications: criteria.recyclableTipifications as string[] }, files: payload.files.map((file) => ({ importId: String(file.importId), name: String(file.name).trim() })) });
     return Response.json(result, { status: result.reused ? 200 : 201 });
-  } catch {
-    return Response.json({ error: "No se pudo iniciar el reciclaje." }, { status: 400 });
+  } catch (error) {
+    // beginIntelligentRecycling exposes only fixed, operator-facing validation
+    // messages. Returning it here lets the UI distinguish a broken saved base
+    // from an ordinary no-match conciliation without leaking database details.
+    return Response.json({ error: error instanceof Error ? error.message : "No se pudo iniciar el reciclaje." }, { status: 400 });
   }
 }

@@ -8,6 +8,18 @@ test("el espacio de reciclaje separa conciliación, evaluación y generación si
   assert.match(component, /2\. Evaluar reciclaje/);
   assert.match(component, /3\. Generar base reciclada/);
   assert.match(component, /evaluatedEligible === 0/);
+  assert.match(component, /No se encontraron móviles coincidentes con la base original seleccionada/);
+  assert.match(component, /Tipificaciones a incluir en la evaluación/);
+  assert.match(component, /gestiones CRM locales seleccionadas; aún no son elegibles/);
+  assert.match(component, /Incidencias locales del archivo CRM/);
+  assert.match(component, /conciliation\?\.uniqueFoundMobiles \?\? 0\) === 0/);
   assert.doesNotMatch(component, /conciliationRows\.length \? 1 : 0/);
   assert.match(component, /importIdFromFingerprint/);
+});
+
+test("la interfaz diferencia coincidencias CRM locales de elegibilidad persistida", async () => {
+  const component = await readFile(new URL("../components/recycling-workspace-v2.tsx", import.meta.url), "utf8");
+  assert.match(component, /uniqueFoundMobiles === 0/);
+  assert.match(component, /gestiones CRM locales seleccionadas; aún no son elegibles/);
+  assert.match(component, /no equivale a elegible hasta conciliar y evaluar en servidor/);
 });

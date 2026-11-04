@@ -40,7 +40,7 @@ function sameStoredOriginalRow(value: unknown, record: StoredRecord): boolean {
 }
 
 export async function beginBaseSave(input: SaveStartPayload) {
-  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true } });
+  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true, estado: true } });
   const old = metadata(existing?.metadatos);
   const nextMetadata: StoredMetadata = { ...input.metadata, revision: input.revision, completed: false };
   if (input.state === "LISTA_PARA_LIMPIAR" && (input.validRecords !== 0 || input.excludedRecords !== 0)) {
@@ -63,12 +63,17 @@ export async function beginBaseSave(input: SaveStartPayload) {
     await prisma.$transaction(async (transaction) => {
       if (existing) {
         const generatedRecycledBase = existing.tipo === "RECICLADA" && old?.completed && Boolean(old.recyclingExecutionId);
-        if (old?.completed && !generatedRecycledBase) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
+        // Releases before the cleaning guard could complete a newly imported
+        // original while it was still LISTA_PARA_LIMPIAR. It is safe to repair
+        // only that impossible state: it has no operational record set and is
+        // not a confirmed commercial distribution.
+        const recoverableInitialSave = existing.tipo === "ORIGINAL" && existing.estado === "LISTA_PARA_LIMPIAR" && old?.completed;
+        if (old?.completed && !generatedRecycledBase && !recoverableInitialSave) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
         await transaction.lote.deleteMany({ where: { baseId: input.id } });
         // A completed base is immutable at the source-row level. Upserts in
         // saveRecordChunk enrich those same records without erasing their
         // original JSON columns; only an interrupted incomplete save is reset.
-        if (!old?.completed) await transaction.registro.deleteMany({ where: { baseId: input.id } });
+        if (!old?.completed || recoverableInitialSave) await transaction.registro.deleteMany({ where: { baseId: input.id } });
       }
       const code = existing?.codigo ?? await nextBaseCode(transaction, receivedAt);
       // An original base is its own root; null avoids a needless self-FK that
@@ -126,6 +131,9 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
   const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true } });
   const baseMetadata = metadata(base?.metadatos);
   if (!base || !baseMetadata || baseMetadata.revision !== revision) return false;
+  if (base.estado === "LISTA_PARA_LIMPIAR") {
+    throw new Error("Completa la limpieza antes de guardar la base en el historial.");
+  }
   const count = await prisma.registro.count({ where: { baseId } });
   if (count !== base.cantidadImportados) throw new Error("La carga de registros aún no está completa.");
   if (!baseMetadata.completed) {
@@ -158,10 +166,9 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
     const derived = assertCompletedRecordIntegrity(recordsForIntegrity, baseMetadata.columnMapping, base.estado);
     const validCount = [...derived.values()].filter((record) => record.tipification === "VALIDO").length;
     const excludedCount = recordsForIntegrity.length - validCount;
-    if (base.estado !== "LISTA_PARA_LIMPIAR" && (base.cantidadValidos !== validCount || base.cantidadExcluidos !== excludedCount)) {
+    if (base.cantidadValidos !== validCount || base.cantidadExcluidos !== excludedCount) {
       throw new Error("Los recuentos declarados no coinciden con los registros originales.");
     }
-    if (base.estado === "LISTA_PARA_LIMPIAR" && lots.length > 0) throw new Error("Una base sin limpiar no puede contener lotes.");
     assertLotsIntegrity(lots, derived);
     assertCommercialLotsIntegrity(lots, savedRecords.map((record) => {
       const original = record.datosOriginales as { provenance?: unknown };
@@ -257,6 +264,8 @@ export async function searchOriginalBases(input: { query: string; page: number; 
     FROM bases
     WHERE tipo = 'ORIGINAL'
       AND metadatos ->> 'completed' = 'true'
+      AND estado <> 'LISTA_PARA_LIMPIAR'
+      AND cantidad_validos > 0
       AND (${query} = '' OR (
         translate(lower(codigo), ${accentFrom}, ${accentTo}) LIKE ${term}
         OR translate(lower(nombre_descriptivo), ${accentFrom}, ${accentTo}) LIKE ${term}
@@ -276,7 +285,7 @@ export async function searchOriginalBases(input: { query: string; page: number; 
     kind: "ORIGINAL",
   });
   const selected = input.selectedId ? await prisma.base.findFirst({
-    where: { id: input.selectedId, tipo: "ORIGINAL", metadatos: { path: ["completed"], equals: true } },
+    where: { id: input.selectedId, tipo: "ORIGINAL", estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
     select: { id: true, codigo: true, nombreOriginal: true, nombreDescriptivo: true, fechaRecepcion: true, cantidadImportados: true, estado: true },
   }) : null;
   return {

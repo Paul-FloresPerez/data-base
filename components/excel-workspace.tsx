@@ -165,6 +165,14 @@ export function ExcelWorkspace() {
     if (!batch || !batchSignature) {
       return;
     }
+    // Persisting an imported, but not yet cleaned, workbook marks the base as
+    // complete even though none of its operational mobiles exists yet. Keep
+    // the original rows in the browser until cleaning establishes the server
+    // validated record set.
+    if (!batch.cleaning) {
+      const timer = window.setTimeout(() => setSaveState("unsaved"), 0);
+      return () => window.clearTimeout(timer);
+    }
     if (lastSavedSignatureRef.current === batchSignature) {
       return;
     }

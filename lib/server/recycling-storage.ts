@@ -88,8 +88,20 @@ export async function beginIntelligentRecycling(input: {
   const effectiveDate = asDate(input.criteria.effectiveDate);
   const minimumDate = asDate(input.criteria.minimumDate);
   if (!effectiveDate || !minimumDate || input.criteria.minimumMonths !== 4 || input.criteria.minimumDate !== minimumPortabilityDate) throw new Error("Los criterios de permanencia no son válidos.");
-  const base = await prisma.base.findUnique({ where: { id: input.baseOriginalId }, select: { tipo: true, metadatos: true } });
+  const base = await prisma.base.findUnique({
+    where: { id: input.baseOriginalId },
+    select: {
+      tipo: true,
+      metadatos: true,
+      estado: true,
+      cantidadValidos: true,
+      _count: { select: { registros: { where: { tipificacion: "VALIDO" } } } },
+    },
+  });
   if (!base || base.tipo !== "ORIGINAL" || !metadataCompleted(base.metadatos)) throw new Error("Selecciona una base original guardada.");
+  if (base.estado === "LISTA_PARA_LIMPIAR" || base.cantidadValidos <= 0 || base._count.registros !== base.cantidadValidos) {
+    throw new Error("La base original no tiene una limpieza guardada correctamente. Ábrela, ejecuta Limpieza y pulsa Reintentar antes de reciclarla.");
+  }
 
   return prisma.$transaction(async (tx) => {
     for (const file of input.files) {
