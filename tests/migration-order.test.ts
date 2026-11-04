@@ -16,6 +16,7 @@ const expected = [
   "20261101110000_add_commercial_reservations",
   "20261101120000_add_processing_jobs",
   "20261104090000_add_canonical_crm_files",
+  "20261104100000_add_global_crm_mobile_lookup_index",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -54,4 +55,6 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[9]!, /CREATE TABLE "archivos_crm_bases"/);
   assert.match(sql[9]!, /CREATE TABLE "filas_archivos_crm"/);
   assert.doesNotMatch(sql[9]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[10]!, /CREATE INDEX "registros_movil_normalizado_idx"/);
+  assert.doesNotMatch(sql[10]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });

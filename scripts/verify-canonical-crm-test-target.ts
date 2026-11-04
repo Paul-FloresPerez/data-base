@@ -16,10 +16,12 @@ try {
   const result = await client.query<{
     branch_id: string | null;
     migration_applied: boolean;
+    global_lookup_migration_applied: boolean;
     canonical_tables_present: boolean;
     canonical_foreign_keys_present: boolean;
     canonical_indexes_present: boolean;
     legacy_tables_present: boolean;
+    global_mobile_lookup_index_present: boolean;
   }>(
     `SELECT
        current_setting('neon.branch_id', true) AS branch_id,
@@ -28,6 +30,11 @@ try {
          WHERE migration_name = '20261104090000_add_canonical_crm_files'
            AND finished_at IS NOT NULL
        ) AS migration_applied,
+       EXISTS (
+         SELECT 1 FROM "_prisma_migrations"
+         WHERE migration_name = '20261104100000_add_global_crm_mobile_lookup_index'
+           AND finished_at IS NOT NULL
+       ) AS global_lookup_migration_applied,
        to_regclass('public.archivos_crm_canonicos') IS NOT NULL
          AND to_regclass('public.archivos_crm_bases') IS NOT NULL
          AND to_regclass('public.filas_archivos_crm') IS NOT NULL
@@ -49,7 +56,9 @@ try {
          AND to_regclass('public.lote_registros') IS NOT NULL
          AND to_regclass('public.archivos_tipificaciones') IS NOT NULL
          AND to_regclass('public.gestiones_tipificacion') IS NOT NULL
-         AS legacy_tables_present`,
+         AS legacy_tables_present,
+       to_regclass('public.registros_movil_normalizado_idx') IS NOT NULL
+         AS global_mobile_lookup_index_present`,
   );
   const row = result.rows[0];
   const branchId = row?.branch_id ?? null;
@@ -60,10 +69,12 @@ try {
     expectedBranchId,
     match,
     migrationApplied: row?.migration_applied ?? false,
+    globalLookupMigrationApplied: row?.global_lookup_migration_applied ?? false,
     canonicalTablesPresent: row?.canonical_tables_present ?? false,
     canonicalForeignKeysPresent: row?.canonical_foreign_keys_present ?? false,
     canonicalIndexesPresent: row?.canonical_indexes_present ?? false,
     legacyTablesPresent: row?.legacy_tables_present ?? false,
+    globalMobileLookupIndexPresent: row?.global_mobile_lookup_index_present ?? false,
   }));
   if (!match) process.exitCode = 1;
 } finally {

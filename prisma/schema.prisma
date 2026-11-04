@@ -158,6 +158,7 @@ model Registro {
   @@unique([baseId, numeroFilaOriginal])
   @@index([baseId])
   @@index([baseId, movilNormalizado])
+  @@index([movilNormalizado])
   @@index([baseId, tipificacion])
   @@map("registros")
 }
