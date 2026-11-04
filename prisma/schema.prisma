@@ -120,6 +120,7 @@ model Base {
   lotes               Lote[]     @relation("LoteBase")
   lotesComoOriginal   Lote[]     @relation("LoteBaseOriginal")
   archivosTipificaciones ArchivoTipificaciones[]
+  asociacionesArchivosCrm ArchivoCrmBase[] @relation("ArchivoCrmBaseOriginal")
   ejecucionesReciclaje EjecucionReciclaje[]
   ejecucionGeneradora EjecucionReciclaje? @relation("BaseReciclada")
   gestionesTipificacion GestionTipificacion[]
@@ -198,9 +199,63 @@ model ArchivoTipificaciones {
   resumen         Json
   base            Base     @relation(fields: [baseId], references: [id], onDelete: Restrict)
   gestiones       GestionTipificacion[]
+  archivoCanonico ArchivoCrmCanonico? @relation("ArchivoCrmCanonicoLegacy")
 
   @@index([baseId, importadoEn])
   @@map("archivos_tipificaciones")
+}
+
+/// Canonical identity for a CRM source file. Legacy ArchivoTipificaciones rows
+/// remain intact; a later migration can link them here without rewriting them.
+model ArchivoCrmCanonico {
+  id                             String   @id @default(uuid()) @db.Uuid
+  importacionId                   String   @unique @map("importacion_id")
+  huellaContenido                 String?  @unique @map("huella_contenido")
+  nombreArchivo                   String   @map("nombre_archivo")
+  archivoTipificacionesLegacyId   String?  @unique @map("archivo_tipificaciones_legacy_id") @db.Uuid
+  metadatos                       Json
+  importadoEn                     DateTime @default(now()) @map("importado_en")
+  archivoTipificacionesLegacy     ArchivoTipificaciones? @relation("ArchivoCrmCanonicoLegacy", fields: [archivoTipificacionesLegacyId], references: [id], onDelete: Restrict)
+  asociaciones                    ArchivoCrmBase[]
+  filas                           FilaArchivoCrm[]
+
+  @@index([importadoEn])
+  @@map("archivos_crm_canonicos")
+}
+
+/// Per-original-base reconciliation snapshot for a reusable canonical CRM file.
+model ArchivoCrmBase {
+  id                    String              @id @default(uuid()) @db.Uuid
+  archivoCrmId          String              @map("archivo_crm_id") @db.Uuid
+  baseOriginalId        String              @map("base_original_id") @db.Uuid
+  resumenConciliacion   Json?               @map("resumen_conciliacion")
+  metadatos             Json
+  asociadoEn            DateTime            @default(now()) @map("asociado_en")
+  archivoCrm            ArchivoCrmCanonico  @relation(fields: [archivoCrmId], references: [id], onDelete: Restrict)
+  baseOriginal          Base                @relation("ArchivoCrmBaseOriginal", fields: [baseOriginalId], references: [id], onDelete: Restrict)
+
+  @@unique([archivoCrmId, baseOriginalId])
+  @@index([baseOriginalId, asociadoEn])
+  @@map("archivos_crm_bases")
+}
+
+/// Immutable source row of a canonical CRM file. It is independent from a
+/// particular base so a file is parsed once and may be reconciled many times.
+model FilaArchivoCrm {
+  id                 String              @id @default(uuid()) @db.Uuid
+  archivoCrmId       String              @map("archivo_crm_id") @db.Uuid
+  hojaOrigen         String              @map("hoja_origen")
+  numeroFilaOrigen   Int                 @map("numero_fila_origen")
+  movilNormalizado   String?             @map("movil_normalizado")
+  datosOriginales    Json                @map("datos_originales")
+  metadatos          Json
+  creadoEn           DateTime            @default(now()) @map("creado_en")
+  archivoCrm         ArchivoCrmCanonico  @relation(fields: [archivoCrmId], references: [id], onDelete: Restrict)
+
+  @@unique([archivoCrmId, hojaOrigen, numeroFilaOrigen])
+  @@index([movilNormalizado])
+  @@index([archivoCrmId, movilNormalizado])
+  @@map("filas_archivos_crm")
 }
 
 /// Future recycling executions must reference exactly one manually selected original base.
