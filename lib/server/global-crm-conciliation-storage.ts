@@ -2,10 +2,64 @@ import "server-only";
 
 import { Prisma } from "../../generated/prisma/client.ts";
 import { materialConflicts, type MaterialConflictField } from "../recycling/global-conciliation.ts";
+import { normalizeSpanishMobile } from "../excel/cleaning.ts";
+import { normalizeRecyclingTipification } from "../recycling/intelligent-recycling.ts";
 import { prisma } from "./prisma.ts";
 
 const DEFAULT_PAGE_SIZE = 250;
 const MAX_PAGE_SIZE = 1_000;
+
+export type CanonicalCrmRowInput = {
+  hoja: string;
+  fila: number;
+  movil: string;
+  fechaGestion: string | null;
+  tipificacion: string | null;
+  ventaConfirmada: boolean;
+  evidenciaVenta: string | null;
+  cells: string[];
+};
+
+function dateOnly(value: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Server boundary for the browser-parsed CRM file. The binary never reaches Neon. */
+export async function createCanonicalCrmFile(input: { importacionId: string; huellaContenido: string; nombreArchivo: string; headers: string[] }) {
+  const existing = await prisma.archivoCrmCanonico.findFirst({ where: { OR: [{ importacionId: input.importacionId }, { huellaContenido: input.huellaContenido }] }, select: { id: true, importacionId: true } });
+  if (existing) return { id: existing.id, importacionId: existing.importacionId, reused: true };
+  try {
+    const file = await prisma.archivoCrmCanonico.create({ data: { importacionId: input.importacionId, huellaContenido: input.huellaContenido, nombreArchivo: input.nombreArchivo, metadatos: { version: 1, headers: input.headers, origin: "CRM" } }, select: { id: true, importacionId: true } });
+    return { ...file, reused: false };
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+    const raced = await prisma.archivoCrmCanonico.findFirstOrThrow({ where: { OR: [{ importacionId: input.importacionId }, { huellaContenido: input.huellaContenido }] }, select: { id: true, importacionId: true } });
+    return { ...raced, reused: true };
+  }
+}
+
+export async function appendCanonicalCrmRows(input: { archivoCrmId: string; rows: readonly CanonicalCrmRowInput[] }) {
+  const unique = new Map<string, CanonicalCrmRowInput>();
+  for (const row of input.rows) unique.set(`${row.hoja}\u0000${row.fila}`, row);
+  const rows = [...unique.values()];
+  const file = await prisma.archivoCrmCanonico.findUnique({ where: { id: input.archivoCrmId }, select: { id: true } });
+  if (!file) throw new Error("El archivo CRM canónico no existe.");
+  await prisma.filaArchivoCrm.createMany({ data: rows.map((row) => ({
+    archivoCrmId: input.archivoCrmId, hojaOrigen: row.hoja, numeroFilaOrigen: row.fila,
+    movilNormalizado: normalizeSpanishMobile(row.movil), fechaGestion: dateOnly(row.fechaGestion),
+    tipificacionOriginal: row.tipificacion?.trim() || null, tipificacionNormalizada: normalizeRecyclingTipification(row.tipificacion),
+    ventaConfirmada: row.ventaConfirmada, evidenciaVenta: row.evidenciaVenta?.trim() || null,
+    datosOriginales: { version: 1, cells: row.cells }, metadatos: { version: 1, origin: "CRM" },
+  })), skipDuplicates: true });
+  const [totalRows, validMobiles, invalidRows] = await Promise.all([
+    prisma.filaArchivoCrm.count({ where: { archivoCrmId: input.archivoCrmId } }),
+    prisma.filaArchivoCrm.findMany({ where: { archivoCrmId: input.archivoCrmId, movilNormalizado: { not: null } }, distinct: ["movilNormalizado"], select: { movilNormalizado: true } }),
+    prisma.filaArchivoCrm.count({ where: { archivoCrmId: input.archivoCrmId, movilNormalizado: null } }),
+  ]);
+  return { totalRows, validMobiles: validMobiles.length, invalidRows };
+}
 
 export type GlobalConciliationStatus = "SIN_COINCIDENCIAS" | "COINCIDENCIA_COMPATIBLE" | "REVISION_CONTRADICCION";
 
