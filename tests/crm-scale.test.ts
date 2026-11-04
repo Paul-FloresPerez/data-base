@@ -82,3 +82,10 @@ test("procesa, conserva y distribuye bases CRM sintéticas de 100, 1.000 y 10.00
     assert.equal(restored.provenanceBySourceRow[2], "MOCK");
   }
 });
+
+test("detecta de forma explícita el límite actual antes de persistir 100.000 filas", () => {
+  const dataset = crmDataset(100_000);
+  const batch = createWorkingBatch(dataset, "00000000-0000-4000-8000-000000000001", "2026-10-27T00:00:00.000Z");
+  batch.cleaning = cleanDataset(dataset);
+  assert.throws(() => serializeBatch(batch, "CRM 100000"), /límite de 10\.000 registros guardables/);
+});
