@@ -24,3 +24,17 @@ test("la interfaz diferencia coincidencias CRM locales de elegibilidad persistid
   assert.match(component, /gestiones CRM locales seleccionadas; aún no son elegibles/);
   assert.match(component, /no equivale a elegible hasta conciliar y evaluar en servidor/);
 });
+
+test("la conciliación muestra progreso, llama a las rutas protegidas y permite reintentar sin duplicar la operación", async () => {
+  const component = await readFile(new URL("../components/recycling-workspace-v2.tsx", import.meta.url), "utf8");
+  const route = await readFile(new URL("../app/api/reciclaje/[executionId]/conciliar/route.ts", import.meta.url), "utf8");
+
+  assert.match(component, /setIsConciliating\(true\)/);
+  assert.match(component, /Conciliando archivos CRM con la base original seleccionada/);
+  assert.match(component, /"\/api\/reciclaje"/);
+  assert.match(component, /\/api\/reciclaje\/\$\{started\.id\}\/conciliar/);
+  assert.match(component, /preparation\.current/);
+  assert.match(component, /El Excel no contiene filas CRM para conciliar/);
+  assert.match(component, /setExecution\(null\)/);
+  assert.match(route, /error instanceof Error \? error\.message/);
+});

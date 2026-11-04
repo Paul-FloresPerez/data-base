@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ execut
       return Response.json({ error: "Datos de conciliación no válidos." }, { status: 400 });
     }
     return Response.json({ conciliation: await previewRecyclingConciliation({ executionId, userId: session.user.id, rows: payload.rows.map((row) => ({ fileId: String(row.fileId), fileName: String(row.fileName).trim(), sourceRow: Number(row.sourceRow), mobile: String(row.mobile) })) }) });
-  } catch {
-    return Response.json({ error: "No se pudo conciliar los archivos CRM." }, { status: 409 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "No se pudo conciliar los archivos CRM." }, { status: 409 });
   }
 }

@@ -117,6 +117,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
   const [preparedExecutionId, setPreparedExecutionId] = useState<string | null>(null);
   const [conciliation, setConciliation] = useState<ConciliationSummary | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isConciliating, setIsConciliating] = useState(false);
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase("es-ES"));
   const importing = progress !== null && progress.processed < progress.total;
 
@@ -128,6 +129,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     setMessage(null);
     setIssues([]);
     setCreatedBatch(null);
+    setExecution(null);
     setPreparedExecutionId(null);
     setConciliation(null);
     const rejected: SourceIssue[] = [];
@@ -265,8 +267,12 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
   }
 
   async function prepareConciliation() {
-    if (!analysis || !originalBaseId || isEvaluating) return;
-    setIsEvaluating(true);
+    if (!analysis || !originalBaseId || isEvaluating || isConciliating) return;
+    if (!analysis.conciliationRows.length) {
+      setMessage("El Excel no contiene filas CRM para conciliar. Revisa la hoja y la columna de móvil.");
+      return;
+    }
+    setIsConciliating(true);
     setMessage(null);
     try {
       if (!preparation.current) {
@@ -286,7 +292,7 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo preparar la conciliación.");
     } finally {
-      setIsEvaluating(false);
+      setIsConciliating(false);
     }
   }
 
@@ -353,7 +359,8 @@ export function RecyclingWorkspaceV2({ onCreate, onContinue, initialOriginalBase
     <section className="border border-slate-200 bg-white p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-semibold">Tipificaciones que deseo evaluar para reciclar</p><p className="mt-1 text-xs text-slate-500">Marcarlas incluye esas gestiones como criterio de recuperación; desmarcarlas las deja fuera de la evaluación. No autoriza contactos ni crea una base por sí solo.</p></div><p className="text-sm font-semibold text-[#174ea6]">{candidateCount} gestiones CRM locales seleccionadas; aún no son elegibles</p></div>
       <div className="mt-3 flex flex-wrap gap-2">{availableTipifications.map((type) => <label key={type} className={`cursor-pointer rounded-md border px-3 py-2 text-sm ${selectedTipifications.has(type) ? "border-blue-600 bg-blue-50 text-blue-900" : "border-slate-200 text-slate-700"}`}><input type="checkbox" checked={selectedTipifications.has(type)} onChange={() => changeSelection(type)} className="sr-only" />{type} <span className="ml-1 font-mono text-xs">{Object.entries(analysis.tipifications).filter(([value]) => normalizeRecyclingTipification(value) === type).reduce((total, [, count]) => total + count, 0)}</span></label>)}<button type="button" onClick={() => { setSelectedTipifications(new Set(availableTipifications)); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Todas</button><button type="button" onClick={() => { setSelectedTipifications(new Set()); setCreatedBatch(null); }} className="px-2 text-xs font-semibold text-[#174ea6]">Ninguna</button></div>
-      <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={isEvaluating || !originalBaseId || Boolean(preparedExecutionId)} onClick={prepareConciliation} className="rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{preparedExecutionId ? "Conciliación completada" : "1. Conciliar archivo CRM"}</button><button type="button" disabled={isEvaluating || !preparedExecutionId || (conciliation?.uniqueFoundMobiles ?? 0) === 0 || Boolean(execution)} onClick={evaluateRecycling} className="rounded-md border border-[#174ea6] px-4 py-2 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400">{execution ? "Evaluación completada" : "2. Evaluar reciclaje"}</button><button type="button" disabled={isEvaluating || !execution || evaluatedEligible === 0 || Boolean(createdBatch)} onClick={generateBatch} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">3. Generar base reciclada</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={isConciliating || isEvaluating || !originalBaseId || Boolean(preparedExecutionId)} onClick={prepareConciliation} className="rounded-md bg-[#174ea6] px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isConciliating ? "Conciliando…" : preparedExecutionId ? "Conciliación completada" : "1. Conciliar archivo CRM"}</button><button type="button" disabled={isConciliating || isEvaluating || !preparedExecutionId || (conciliation?.uniqueFoundMobiles ?? 0) === 0 || Boolean(execution)} onClick={evaluateRecycling} className="rounded-md border border-[#174ea6] px-4 py-2 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400">{execution ? "Evaluación completada" : "2. Evaluar reciclaje"}</button><button type="button" disabled={isConciliating || isEvaluating || !execution || evaluatedEligible === 0 || Boolean(createdBatch)} onClick={generateBatch} className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">3. Generar base reciclada</button></div>
+      {(isConciliating || message) ? <p role="status" className={`mt-3 text-xs ${message ? "text-slate-700" : "text-[#174ea6]"}`}>{isConciliating ? "Conciliando archivos CRM con la base original seleccionada…" : message}</p> : null}
       {execution?.summary ? <dl className="mt-4 grid grid-cols-2 border border-slate-200 sm:grid-cols-3 lg:grid-cols-6">{[["Elegibles", execution.summary.ELEGIBLE ?? 0], ["Ventas bloqueadas", execution.summary.BLOQUEADO_VENTA ?? 0], ["Tipificación / gestión", execution.summary.REVISION_GESTION ?? 0], ["Permanencia", execution.summary.REVISION_PERMANENCIA ?? 0], ["Reservas / conflictos", execution.summary.REVISION_CONFLICTO ?? 0], ["Fuera de rango", execution.summary.FUERA_RANGO_HISTORICO ?? 0]].map(([label, value]) => <div key={String(label)} className="border-b border-r border-slate-100 px-3 py-2 lg:border-b-0"><dt className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 text-base font-semibold text-slate-900">{value}</dd></div>)}</dl> : null}
       {execution && evaluatedEligible === 0 ? <p role="status" className="mt-3 text-xs text-amber-800">{(execution.summary?.evaluated ?? 0) === 0 ? "No se evaluaron coincidencias de la base original. Revisa la conciliación y las incidencias antes de generar una base reciclada." : "No hay candidatos elegibles después de validar ventas, reservas, tipificación y permanencia. La base no se puede generar; consulta las decisiones e incidencias."}</p> : null}
     </section>
