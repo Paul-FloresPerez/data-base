@@ -37,6 +37,28 @@ operación por el hecho de que exista una pantalla.
 6. Un resultado MOCK no acredita operador real para distribución definitiva;
    EXCEL, CRM, MOCK y API_REAL permanecen diferenciados.
 
+## Jerarquía comercial y tipificaciones normalizadas
+
+La evidencia se resuelve en este orden: venta externa CONFIRMADA, oposición al
+contacto, reserva ACTIVA, gestiones CRM y, finalmente, operador/portabilidad.
+Una tipificación de CRM nunca crea por sí sola una venta externa confirmada.
+
+| Categoría | Textos exactos admitidos | Decisión automática |
+|---|---|---|
+| CONTACTO_NO_ESTABLECIDO | NO RESPONDE, NO CONTESTA, BUZÓN DE VOZ | Candidato si cumple el resto de reglas |
+| CONTACTO_INTERRUMPIDO | CORTA LLAMADA | Candidato solo sin restricción posterior |
+| SEGUIMIENTO_PENDIENTE | AGENDADO | Revisión hasta resolución explícita |
+| INTERES_COMERCIAL | INTERESADO, CONOCE EL MÉTODO | Revisión hasta resolución explícita |
+| VENTA_CRM_NO_CONFIRMADA | VENTA, VENDIDO, VENTA CONFIRMADA | Revisión; no crea venta externa |
+| RECHAZO_COMERCIAL | NO INTERESA | Excluido del reciclaje automático |
+| DATOS_INCORRECTOS | OPERADOR INCORRECTO, NO ES TITULAR, TITULAR INCORRECTO | Revisión |
+| OPOSICION_CONTACTO | LISTA ROBINSON, OPOSICIÓN, NO LLAMAR, NO CONTACTAR | Supresión prioritaria y revisión |
+| OTROS_REQUIERE_REVISION | Cualquier texto no listado | Revisión conservadora |
+
+Las decisiones anteriores son obligatorias. La equivalencia de nuevos textos,
+la caducidad o cierre de AGENDADO/INTERESADO y listas externas de oposición
+requieren parametrización futura, evidencia auditada y pruebas de regresión.
+
 ## Reciclaje global aprobado
 
 1. Las bases ORIGINAL válidamente guardadas forman el universo de búsqueda. La

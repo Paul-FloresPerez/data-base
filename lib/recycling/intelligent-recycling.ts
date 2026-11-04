@@ -1,7 +1,18 @@
 import { parsePortabilityDateParts } from "../excel/portability-date.ts";
 
-export const defaultRecyclableTipifications = ["NO CONTESTA", "BUZÓN DE VOZ", "AGENDADO"] as const;
+export const defaultRecyclableTipifications = ["NO CONTESTA", "BUZÓN DE VOZ", "CORTA LLAMADA"] as const;
 export const minimumPortabilityDate = "2019-02-01";
+
+export type RecyclingTipificationCategory =
+  | "CONTACTO_NO_ESTABLECIDO"
+  | "CONTACTO_INTERRUMPIDO"
+  | "SEGUIMIENTO_PENDIENTE"
+  | "INTERES_COMERCIAL"
+  | "VENTA_CRM_NO_CONFIRMADA"
+  | "RECHAZO_COMERCIAL"
+  | "DATOS_INCORRECTOS"
+  | "OPOSICION_CONTACTO"
+  | "OTROS_REQUIERE_REVISION";
 
 export type RecyclingDecision = "ELEGIBLE" | "BLOQUEADO_VENTA" | "REVISION_GESTION" | "REVISION_CONFLICTO" | "REVISION_PERMANENCIA" | "FUERA_RANGO_HISTORICO";
 
@@ -51,6 +62,21 @@ export function normalizeRecyclingTipification(value: string | null | undefined)
   if (normalized === "NO RESPONDE" || normalized === "NO CONTESTA") return "NO CONTESTA";
   if (normalized === "BUZON DE VOZ") return "BUZÓN DE VOZ";
   return normalized;
+}
+
+/** Exact, auditable mappings only. Unknown CRM text remains conservative. */
+export function classifyRecyclingTipification(value: string | null | undefined): RecyclingTipificationCategory {
+  switch (normalizeRecyclingTipification(value)) {
+    case "NO CONTESTA": case "BUZÓN DE VOZ": return "CONTACTO_NO_ESTABLECIDO";
+    case "CORTA LLAMADA": return "CONTACTO_INTERRUMPIDO";
+    case "AGENDADO": return "SEGUIMIENTO_PENDIENTE";
+    case "INTERESADO": case "CONOCE EL METODO": return "INTERES_COMERCIAL";
+    case "VENTA": case "VENDIDO": case "VENTA CONFIRMADA": return "VENTA_CRM_NO_CONFIRMADA";
+    case "NO INTERESA": return "RECHAZO_COMERCIAL";
+    case "OPERADOR INCORRECTO": case "NO ES TITULAR": case "TITULAR INCORRECTO": return "DATOS_INCORRECTOS";
+    case "LISTA ROBINSON": case "OPOSICION": case "OPOSICIÓN": case "NO LLAMAR": case "NO CONTACTAR": return "OPOSICION_CONTACTO";
+    default: return "OTROS_REQUIERE_REVISION";
+  }
 }
 
 function day(value: string): Date | null {
@@ -110,14 +136,23 @@ export function evaluateIntelligentRecycling(
 
   for (const original of originals) {
     const events = original.mobile ? byMobile.get(original.mobile) ?? [] : [];
-    const sale = events.find((event) => event.confirmedSale);
+    const opposition = events.find((event) => classifyRecyclingTipification(event.tipificationOriginal) === "OPOSICION_CONTACTO");
+    const pending = events.find((event) => {
+      const category = classifyRecyclingTipification(event.tipificationOriginal);
+      return category === "SEGUIMIENTO_PENDIENTE" || category === "INTERES_COMERCIAL";
+    });
+    const crmSale = events.find((event) => event.confirmedSale || classifyRecyclingTipification(event.tipificationOriginal) === "VENTA_CRM_NO_CONFIRMADA");
     let decision: RecyclingDecisionRecord;
     if (original.mobile && globallyBlockedMobiles.has(original.mobile)) {
       decision = { originalRecordId: original.id, decision: "BLOQUEADO_VENTA", reason: "Venta confirmada en registro comercial externo", winningManagementId: null };
+    } else if (opposition) {
+      decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Oposición al contacto documentada; supresión comercial prioritaria", winningManagementId: opposition.id };
     } else if (original.mobile && activelyReservedMobiles.has(original.mobile)) {
       decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Reserva comercial activa; requiere liberación explícita antes de reciclar", winningManagementId: null };
-    } else if (sale) {
-      decision = { originalRecordId: original.id, decision: "BLOQUEADO_VENTA", reason: sale.saleEvidence || "Venta confirmada en historial CRM", winningManagementId: sale.id };
+    } else if (pending) {
+      decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Seguimiento o interés comercial pendiente de resolución explícita", winningManagementId: pending.id };
+    } else if (crmSale) {
+      decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Venta indicada en CRM sin confirmación en Ventas", winningManagementId: crmSale.id };
     } else {
       const ambiguousSale = events.find((event) => event.saleAmbiguous);
       const winner = newestManagement(events);
@@ -128,6 +163,10 @@ export function evaluateIntelligentRecycling(
         decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Sin gestión CRM con fecha válida", winningManagementId: null };
       } else if (winner.conflict) {
         decision = { originalRecordId: original.id, decision: "REVISION_CONFLICTO", reason: "Tipificaciones contradictorias en la misma fecha", winningManagementId: winner.event.id };
+      } else if (classifyRecyclingTipification(winner.event.tipificationOriginal) === "RECHAZO_COMERCIAL") {
+        decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Rechazo comercial; no se recicla automáticamente", winningManagementId: winner.event.id };
+      } else if (classifyRecyclingTipification(winner.event.tipificationOriginal) === "DATOS_INCORRECTOS") {
+        decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Datos de contacto o titularidad requieren revisión", winningManagementId: winner.event.id };
       } else if (!allowed.has(normalizeRecyclingTipification(winner.event.tipificationOriginal))) {
         decision = { originalRecordId: original.id, decision: "REVISION_GESTION", reason: "Tipificación no seleccionada o no reconocida", winningManagementId: winner.event.id };
       } else if (!portability) {

@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification } from "../lib/recycling/intelligent-recycling.ts";
+import { classifyRecyclingTipification, evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification } from "../lib/recycling/intelligent-recycling.ts";
 
-const criteria = (effectiveDate: string) => ({ effectiveDate, recyclableTipifications: ["NO CONTESTA", "BUZÓN DE VOZ", "AGENDADO"], minimumMonths: 4, minimumDate: minimumPortabilityDate });
+const criteria = (effectiveDate: string) => ({ effectiveDate, recyclableTipifications: ["NO CONTESTA", "BUZÓN DE VOZ", "CORTA LLAMADA"], minimumMonths: 4, minimumDate: minimumPortabilityDate });
 const original = (id: string, mobile: string, portabilityDate: string | null) => ({ id, mobile, portabilityDate });
 const management = (id: string, mobile: string, managedAt: string | null, tipificationOriginal: string | null, confirmedSale = false) => ({ id, mobile, managedAt, tipificationOriginal, confirmedSale, saleEvidence: confirmedSale ? "Venta confirmada sintética" : null });
 
-test("una venta confirmada bloquea una tipificación reciclable contradictoria", () => {
+test("una venta indicada por CRM requiere revisión hasta existir bloqueo externo confirmado", () => {
   const result = evaluateIntelligentRecycling([original("r1", "612345678", "2025-01-01")], [management("m1", "612345678", "2025-06-02", "NO CONTESTA"), management("m2", "612345678", "2025-01-03", "NO CONTESTA", true)], criteria("2025-06-30"));
-  assert.equal(result.decisions[0]?.decision, "BLOQUEADO_VENTA");
+  assert.equal(result.decisions[0]?.decision, "REVISION_CONFLICTO");
+  assert.match(result.decisions[0]?.reason ?? "", /sin confirmación en Ventas/);
 });
 
 test("una reserva comercial activa no vuelve elegible un móvil aunque su gestión y permanencia cumplan", () => {
@@ -39,9 +40,50 @@ test("conserva la precedencia por fecha, incidencias ajenas y tipificaciones des
 
 test("recalcula cuatro meses completos sin alterar la fecha de portabilidad", () => {
   const inputs = [original("r1", "612345678", "2025-02-01")];
-  const events = [management("m1", "612345678", "2025-06-01", "AGENDADO")];
+  const events = [management("m1", "612345678", "2025-06-01", "CORTA LLAMADA")];
   assert.equal(evaluateIntelligentRecycling(inputs, events, criteria("2025-05-31")).decisions[0]?.decision, "REVISION_PERMANENCIA");
   assert.equal(evaluateIntelligentRecycling(inputs, events, criteria("2025-06-01")).decisions[0]?.decision, "ELEGIBLE");
+});
+
+test("clasifica tipificaciones con una política conservadora y auditable", () => {
+  assert.equal(classifyRecyclingTipification(" no responde "), "CONTACTO_NO_ESTABLECIDO");
+  assert.equal(classifyRecyclingTipification("BUZON DE VOZ"), "CONTACTO_NO_ESTABLECIDO");
+  assert.equal(classifyRecyclingTipification("Corta llamada"), "CONTACTO_INTERRUMPIDO");
+  assert.equal(classifyRecyclingTipification("AGENDADO"), "SEGUIMIENTO_PENDIENTE");
+  assert.equal(classifyRecyclingTipification("INTERESADO"), "INTERES_COMERCIAL");
+  assert.equal(classifyRecyclingTipification("VENTA"), "VENTA_CRM_NO_CONFIRMADA");
+  assert.equal(classifyRecyclingTipification("NO INTERESA"), "RECHAZO_COMERCIAL");
+  assert.equal(classifyRecyclingTipification("Titular incorrecto"), "DATOS_INCORRECTOS");
+  assert.equal(classifyRecyclingTipification("No contactar"), "OPOSICION_CONTACTO");
+  assert.equal(classifyRecyclingTipification("texto no aprobado"), "OTROS_REQUIERE_REVISION");
+});
+
+test("no recicla seguimientos, interés, ventas CRM, oposición o rechazo sin una resolución explícita", () => {
+  const cases = [
+    ["AGENDADO", "REVISION_GESTION"],
+    ["INTERESADO", "REVISION_GESTION"],
+    ["VENTA", "REVISION_CONFLICTO"],
+    ["NO CONTACTAR", "REVISION_CONFLICTO"],
+    ["NO INTERESA", "REVISION_GESTION"],
+  ] as const;
+  for (const [tipification, expected] of cases) {
+    const result = evaluateIntelligentRecycling(
+      [original(`r-${tipification}`, "612345678", "2025-01-01")],
+      [management(`m-${tipification}`, "612345678", "2025-06-01", tipification)],
+      criteria("2025-06-01"),
+    );
+    assert.equal(result.decisions[0]?.decision, expected, tipification);
+  }
+});
+
+test("una venta externa conserva prioridad sobre toda gestión CRM", () => {
+  const result = evaluateIntelligentRecycling(
+    [original("r1", "612345678", "2025-01-01")],
+    [management("m1", "612345678", "2025-06-01", "NO CONTACTAR")],
+    criteria("2025-06-01"),
+    new Set(["612345678"]),
+  );
+  assert.equal(result.decisions[0]?.decision, "BLOQUEADO_VENTA");
 });
 
 test("deja en revisión fechas ausentes, inválidas y anteriores al mínimo histórico", () => {
