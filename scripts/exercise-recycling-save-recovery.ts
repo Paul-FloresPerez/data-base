@@ -19,7 +19,7 @@ const testRunId = randomUUID();
 const ids = { user: randomUUID(), base: randomUUID(), file: randomUUID() };
 const mobile = `6${Number.parseInt(testRunId.slice(0, 8), 16).toString().slice(-8).padStart(8, "0")}`;
 
-function storedMetadata(completed: boolean, revision: string | null) {
+function storedMetadata(completed: boolean, revision: string | null, enriched = false) {
   return {
     version: 1 as const,
     completed,
@@ -27,7 +27,7 @@ function storedMetadata(completed: boolean, revision: string | null) {
     originalFileName: `synthetic-recovery-${testRunId}.xlsx`,
     columns: ["Teléfono Movil"],
     columnMapping: { movil: 0, enriched: {} },
-    enrichmentColumns: null,
+    enrichmentColumns: enriched ? ["Teléfono Movil", "Operador Actual"] : null,
     enrichmentMode: "preserve" as const,
     campaignFilters: {},
     distribution: { batchSize: 100, selectedCampaigns: [] },
@@ -37,7 +37,7 @@ function storedMetadata(completed: boolean, revision: string | null) {
   };
 }
 
-function startPayload(revision: string): SaveStartPayload {
+function startPayload(revision: string, enriched = false): SaveStartPayload {
   return {
     id: ids.base,
     name: "Synthetic recovery fixture",
@@ -45,14 +45,14 @@ function startPayload(revision: string): SaveStartPayload {
     expectedRecords: 1,
     validRecords: 1,
     excludedRecords: 0,
-    state: "LISTA_PARA_ENRIQUECER",
+    state: enriched ? "LISTA_PARA_DISTRIBUIR" : "LISTA_PARA_ENRIQUECER",
     receivedAt: null,
     originalBaseId: null,
-    metadata: storedMetadata(false, null),
+    metadata: storedMetadata(false, null, enriched),
   };
 }
 
-function record(): StoredRecord {
+function record(enriched = false): StoredRecord {
   return {
     sourceRow: 2,
     cells: [mobile],
@@ -63,7 +63,7 @@ function record(): StoredRecord {
     normalizedMobile: mobile,
     reason: null,
     tipification: "VALIDO",
-    enrichedCells: null,
+    enrichedCells: enriched ? [mobile, "Vodafone"] : null,
     provenance: "EXCEL",
   };
 }
@@ -113,7 +113,19 @@ try {
   if (recovered?.estado !== "LISTA_PARA_ENRIQUECER" || !recoveredCompleted || recovered.registros.length !== 1 || recovered.registros[0]?.movilNormalizado !== mobile || recovered.registros[0]?.tipificacion !== "VALIDO") {
     throw new Error("Recovery did not replace the incomplete state with the cleaned record set.");
   }
-  console.log(JSON.stringify({ target: "test", testRunId, incompleteBaseRejected: true, recoveryCompleted: true, providerCalls: 0 }));
+  // A normal base may be saved after cleaning and again after enrichment. It
+  // has no commercial lot yet, so the second persistence must replace only its
+  // operational snapshot and must not report it as an immutable distribution.
+  const enrichmentRevision = randomUUID();
+  await beginBaseSave(startPayload(enrichmentRevision, true));
+  if (!await saveRecordChunk(ids.base, enrichmentRevision, [record(true)])) throw new Error("Completed operational base did not accept its enrichment revision.");
+  if (!await completeBaseSave(ids.base, enrichmentRevision, [], ids.user)) throw new Error("Enriched operational base did not complete.");
+  const enrichedBase = await prisma.base.findUnique({ where: { id: ids.base }, include: { registros: true } });
+  const enrichedMetadata = enrichedBase?.metadatos as { completed?: boolean; commercialDistributionConfirmed?: boolean } | null;
+  if (enrichedBase?.estado !== "LISTA_PARA_DISTRIBUIR" || !enrichedMetadata?.completed || enrichedMetadata.commercialDistributionConfirmed || enrichedBase.registros.length !== 1 || (enrichedBase.registros[0]?.datosOriginales as { enrichedCells?: unknown[] }).enrichedCells?.[1] !== "Vodafone") {
+    throw new Error("An editable operational save did not retain its enriched snapshot correctly.");
+  }
+  console.log(JSON.stringify({ target: "test", testRunId, incompleteBaseRejected: true, recoveryCompleted: true, enrichedResaveCompleted: true, commercialLots: 0, providerCalls: 0 }));
 } finally {
   const auditIds = (await prisma.eventoAuditoria.findMany({ where: { baseId: ids.base, usuarioId: ids.user }, select: { id: true } })).map((item) => item.id);
   if (auditIds.length) await prisma.eventoAuditoria.deleteMany({ where: { id: { in: auditIds } } });

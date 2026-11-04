@@ -29,6 +29,7 @@ interface AppShellProps {
   onOpenProcessing: () => void;
   onStartNewBatch: () => void;
   saveState?: "error" | "saved" | "saving" | "unsaved";
+  saveError?: string | null;
   onRetrySave?: () => void;
   workflow: readonly WorkflowStep[];
 }
@@ -84,7 +85,7 @@ const saveStateLabel = {
   unsaved: "Sin guardar",
 } as const;
 
-export function AppShell({ activeModule, batch, children, onNavigate, onOpenProcessing, onStartNewBatch, workflow, saveState, onRetrySave }: AppShellProps) {
+export function AppShell({ activeModule, batch, children, onNavigate, onOpenProcessing, onStartNewBatch, workflow, saveState, saveError, onRetrySave }: AppShellProps) {
   const isProcessing = ["importacion", "limpieza", "enriquecimiento", "campanas", "distribucion", "exportacion"].includes(activeModule);
   const activeItem = isProcessing ? { label: "Procesar base" } : primaryModules.find((item) => item.id === activeModule) ?? primaryModules[0];
 
@@ -120,7 +121,7 @@ export function AppShell({ activeModule, batch, children, onNavigate, onOpenProc
                 <h1 className="truncate text-base font-semibold tracking-tight text-[#0f274f]">{batch ? (batch.displayName ?? batch.fileName) : activeItem.label}</h1>
                 {batch ? <><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${batch.kind === "RECICLADA" ? "border border-violet-200 bg-violet-50 text-violet-800" : "border border-slate-200 bg-slate-50 text-slate-600"}`}>{batch.kind}</span><span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">{batch.id.slice(0, 8)}</span></> : null}
               </div>
-              {batch ? <p className="truncate text-[11px] text-slate-500">{batch.records} registros · {statusLabels[batch.status]} · {saveState ? saveStateLabel[saveState] : "Cambios locales"}{saveState === "error" && onRetrySave ? <button type="button" onClick={onRetrySave} className="ml-2 font-semibold text-[#174ea6] underline underline-offset-2">Reintentar</button> : null}</p> : null}
+              {batch ? <p className="truncate text-[11px] text-slate-500" title={saveState === "error" ? saveError ?? undefined : undefined}>{batch.records} registros · {statusLabels[batch.status]} · {saveState ? saveStateLabel[saveState] : "Cambios locales"}{saveState === "error" && onRetrySave ? <button type="button" onClick={onRetrySave} className="ml-2 font-semibold text-[#174ea6] underline underline-offset-2">Reintentar</button> : null}{saveState === "error" && saveError ? <span className="ml-2 text-rose-700">{saveError}</span> : null}</p> : null}
             </div>
             <label className="block lg:hidden">
               <span className="sr-only">Cambiar de módulo</span>

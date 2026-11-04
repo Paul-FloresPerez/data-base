@@ -146,7 +146,9 @@ export function ExcelWorkspace() {
   const [isSingleHlrTestServerReady, setIsSingleHlrTestServerReady] = useState(false);
   const [isCleaning, startCleaning] = useTransition();
   const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveRetry, setSaveRetry] = useState(0);
+  const [isConfirmingCommercialDistribution, setIsConfirmingCommercialDistribution] = useState(false);
   const currentBatchRef = useRef<WorkingBatch | null>(null);
   const saveInFlightRef = useRef(false);
   const lastSavedSignatureRef = useRef<string | null>(null);
@@ -173,6 +175,10 @@ export function ExcelWorkspace() {
       const timer = window.setTimeout(() => setSaveState("unsaved"), 0);
       return () => window.clearTimeout(timer);
     }
+    if (batch.commercialDistributionConfirmed) {
+      const timer = window.setTimeout(() => setSaveState("saved"), 0);
+      return () => window.clearTimeout(timer);
+    }
     if (lastSavedSignatureRef.current === batchSignature) {
       return;
     }
@@ -185,6 +191,7 @@ export function ExcelWorkspace() {
       const savingSignature = JSON.stringify(savingBatch);
       saveInFlightRef.current = true;
       setSaveState("saving");
+      setSaveError(null);
       let completed = false;
       void saveBatchToHistory(savingBatch, savingBatch.displayName ?? savingBatch.fileName.replace(/\.xlsx$/i, ""))
         .then(() => {
@@ -192,7 +199,10 @@ export function ExcelWorkspace() {
           lastSavedSignatureRef.current = savingSignature;
           setSaveState("saved");
         })
-        .catch(() => setSaveState("error"))
+        .catch((error) => {
+          setSaveState("error");
+          setSaveError(error instanceof Error ? error.message : "No se pudo guardar la base.");
+        })
         .finally(() => {
           saveInFlightRef.current = false;
           if (completed && currentBatchRef.current && JSON.stringify(currentBatchRef.current) !== savingSignature) {
@@ -572,17 +582,34 @@ export function ExcelWorkspace() {
   }
 
   function updateCampaignFilters(nextFilters: CampaignFilters) {
-    setBatch((currentBatch) => currentBatch ? { ...currentBatch, exportCompletedAt: null, campaignFilters: nextFilters } : currentBatch);
+    setBatch((currentBatch) => currentBatch?.commercialDistributionConfirmed ? currentBatch : currentBatch ? { ...currentBatch, exportCompletedAt: null, campaignFilters: nextFilters } : currentBatch);
   }
 
   function updateSelectedCampaigns(selectedCampaigns: CampaignOperatorId[]) {
-    setBatch((currentBatch) => currentBatch
+    setBatch((currentBatch) => currentBatch?.commercialDistributionConfirmed ? currentBatch : currentBatch
       ? { ...currentBatch, exportCompletedAt: null, distribution: { ...currentBatch.distribution, selectedCampaigns } }
       : currentBatch);
   }
 
   function updateDistribution(settings: DistributionSettings) {
-    setBatch((currentBatch) => currentBatch ? { ...currentBatch, exportCompletedAt: null, distribution: settings } : currentBatch);
+    setBatch((currentBatch) => currentBatch?.commercialDistributionConfirmed ? currentBatch : currentBatch ? { ...currentBatch, exportCompletedAt: null, distribution: settings } : currentBatch);
+  }
+
+  async function confirmCommercialDistribution() {
+    if (!batch || !batch.enrichmentOutput || batch.commercialDistributionConfirmed) return;
+    if (!window.confirm("¿Confirmar esta distribución comercial? El servidor reservará los móviles de los lotes y no podrás modificar esta configuración sin una liberación autorizada.")) return;
+    setIsConfirmingCommercialDistribution(true);
+    setSaveError(null);
+    try {
+      await saveBatchToHistory(batch, batch.displayName ?? batch.fileName.replace(/\.xlsx$/i, ""), { confirmCommercialDistribution: true });
+      setBatch((currentBatch) => currentBatch?.id === batch.id ? { ...currentBatch, commercialDistributionConfirmed: true } : currentBatch);
+      setSaveState("saved");
+    } catch (error) {
+      setSaveState("error");
+      setSaveError(error instanceof Error ? error.message : "No se pudo confirmar la distribución comercial.");
+    } finally {
+      setIsConfirmingCommercialDistribution(false);
+    }
   }
 
   function navigate(module: WorkspaceModule) {
@@ -802,7 +829,7 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Primero completa las campañas" description="La distribución usa los registros enriquecidos y los filtros activos de las campañas para calcular los lotes." action={<PrimaryButton type="button" onClick={() => navigate("campanas")}>Ir a campañas</PrimaryButton>} />;
     }
 
-    return <DistributionWorkspace batch={summarizeBatch(batch)} report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onContinue={() => navigate("exportacion")} />;
+    return <DistributionWorkspace batch={summarizeBatch(batch)} commercialDistributionConfirmed={batch.commercialDistributionConfirmed} isConfirmingCommercialDistribution={isConfirmingCommercialDistribution} report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onConfirmCommercialDistribution={() => void confirmCommercialDistribution()} onContinue={() => navigate("exportacion")} />;
   }
 
   function renderExportModule() {
@@ -845,7 +872,7 @@ export function ExcelWorkspace() {
   }
 
   return (
-    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} saveState={batch ? saveState : undefined} onRetrySave={() => setSaveRetry((current) => current + 1)} workflow={workflow}>
+    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} saveState={batch ? saveState : undefined} saveError={batch ? saveError : undefined} onRetrySave={() => setSaveRetry((current) => current + 1)} workflow={workflow}>
       {error ? <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span className="font-semibold">No se pudo continuar: </span>{error}</div> : null}
       {moduleContent}
       {isNewBatchConfirmationOpen ? (

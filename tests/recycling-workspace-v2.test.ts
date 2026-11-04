@@ -9,7 +9,8 @@ test("el espacio de reciclaje separa conciliación, evaluación y generación si
   assert.match(component, /3\. Generar base reciclada/);
   assert.match(component, /evaluatedEligible === 0/);
   assert.match(component, /No se encontraron móviles coincidentes con la base original seleccionada/);
-  assert.match(component, /Tipificaciones a incluir en la evaluación/);
+  assert.match(component, /Tipificaciones que deseo evaluar para reciclar/);
+  assert.match(component, /No se evaluaron coincidencias de la base original/);
   assert.match(component, /gestiones CRM locales seleccionadas; aún no son elegibles/);
   assert.match(component, /Incidencias locales del archivo CRM/);
   assert.match(component, /conciliation\?\.uniqueFoundMobiles \?\? 0\) === 0/);

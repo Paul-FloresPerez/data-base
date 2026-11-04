@@ -20,7 +20,7 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
  * fresh revision for the same UUID, so a failed client request never exposes a
  * partial base as usable data.
  */
-export async function saveBatchToHistory(batch: WorkingBatch, name: string): Promise<void> {
+export async function saveBatchToHistory(batch: WorkingBatch, name: string, options: { confirmCommercialDistribution?: boolean } = {}): Promise<void> {
   const { start, records } = serializeBatch(batch, name);
   await request("/api/bases", { method: "POST", body: JSON.stringify(start) });
   for (const chunk of splitRecords(records)) {
@@ -31,6 +31,8 @@ export async function saveBatchToHistory(batch: WorkingBatch, name: string): Pro
   }
   await request(`/api/bases/${start.id}/finalizar`, {
     method: "POST",
-    body: JSON.stringify({ revision: start.revision, lots: buildStoredLots(batch) }),
+    // Autosave and "Guardar base" persist the base only. Commercial lots and
+    // reservations require the explicit confirmation action in Distribución.
+    body: JSON.stringify({ revision: start.revision, lots: options.confirmCommercialDistribution ? buildStoredLots(batch) : [] }),
   });
 }

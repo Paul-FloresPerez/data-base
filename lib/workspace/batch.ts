@@ -41,6 +41,8 @@ export interface WorkingBatch {
   historicalResultImports: HistoricalResultImportSummary[];
   /** Set only after an export file is successfully generated and download is initiated locally. */
   exportCompletedAt: string | null;
+  /** True only after the server persisted lots and their commercial reservations. */
+  commercialDistributionConfirmed: boolean;
   fileName: string;
   id: string;
   kind: BatchKind;
@@ -62,6 +64,7 @@ export interface BatchSummary {
   fileName: string;
   id: string;
   kind: BatchKind;
+  commercialDistributionConfirmed: boolean;
   records: number;
   status: BatchStatus;
 }
@@ -109,6 +112,7 @@ export function createWorkingBatch(
     historicalResultImport: null,
     historicalResultImports: [],
     exportCompletedAt: null,
+    commercialDistributionConfirmed: false,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),
     realHlrConsultationsByMobile: {},
     realHlrQueue: null,
@@ -141,6 +145,7 @@ export function summarizeBatch(batch: WorkingBatch): BatchSummary {
     createdAt: batch.createdAt,
     records: batch.dataset.records.length,
     kind: batch.kind,
+    commercialDistributionConfirmed: batch.commercialDistributionConfirmed,
     status: getBatchStatus(batch),
   };
 }

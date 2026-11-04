@@ -40,7 +40,7 @@ function sameStoredOriginalRow(value: unknown, record: StoredRecord): boolean {
 }
 
 export async function beginBaseSave(input: SaveStartPayload) {
-  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true, estado: true } });
+  const existing = await prisma.base.findUnique({ where: { id: input.id }, select: { metadatos: true, codigo: true, tipo: true, baseOriginalId: true, estado: true, _count: { select: { lotes: true } } } });
   const old = metadata(existing?.metadatos);
   const nextMetadata: StoredMetadata = { ...input.metadata, revision: input.revision, completed: false };
   if (input.state === "LISTA_PARA_LIMPIAR" && (input.validRecords !== 0 || input.excludedRecords !== 0)) {
@@ -68,12 +68,16 @@ export async function beginBaseSave(input: SaveStartPayload) {
         // only that impossible state: it has no operational record set and is
         // not a confirmed commercial distribution.
         const recoverableInitialSave = existing.tipo === "ORIGINAL" && existing.estado === "LISTA_PARA_LIMPIAR" && old?.completed;
-        if (old?.completed && !generatedRecycledBase && !recoverableInitialSave) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
+        // A saved base without lots is an editable operational snapshot. It
+        // must accept a later enrichment/filter save, but a confirmed lot is
+        // immutable because it owns commercial reservations and audit history.
+        const editableOperationalSave = existing._count.lotes === 0 && old?.completed;
+        if (old?.completed && !generatedRecycledBase && !recoverableInitialSave && !editableOperationalSave) throw new Error("Una base con distribución confirmada no puede reemplazarse.");
         await transaction.lote.deleteMany({ where: { baseId: input.id } });
         // A completed base is immutable at the source-row level. Upserts in
         // saveRecordChunk enrich those same records without erasing their
         // original JSON columns; only an interrupted incomplete save is reset.
-        if (!old?.completed || recoverableInitialSave) await transaction.registro.deleteMany({ where: { baseId: input.id } });
+        if (!old?.completed || recoverableInitialSave || editableOperationalSave) await transaction.registro.deleteMany({ where: { baseId: input.id } });
       }
       const code = existing?.codigo ?? await nextBaseCode(transaction, receivedAt);
       // An original base is its own root; null avoids a needless self-FK that
@@ -222,7 +226,7 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
         if (!base.baseOriginalId) throw new Error("Una ejecución de reciclaje requiere una base original.");
         await linkGeneratedRecycledBase(transaction, { executionId: baseMetadata.recyclingExecutionId, baseId, baseOriginalId: base.baseOriginalId });
       }
-      await transaction.base.update({ where: { id: baseId }, data: { cantidadValidos: validCount, cantidadExcluidos: excludedCount, metadatos: { ...baseMetadata, commercialMatrix: commercialMatrixSnapshot(), completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
+      await transaction.base.update({ where: { id: baseId }, data: { cantidadValidos: validCount, cantidadExcluidos: excludedCount, metadatos: { ...baseMetadata, commercialMatrix: commercialMatrixSnapshot(), commercialDistributionConfirmed: lots.length > 0, completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
       await appendBaseLifecycleEvents(transaction, { baseId, userId, metadata: baseMetadata, imported: base.cantidadImportados, valid: validCount, excluded: excludedCount, lots });
     });
   }

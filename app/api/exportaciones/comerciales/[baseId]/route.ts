@@ -56,7 +56,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ base
     plan.uniqueEligibleCount = new Set(snapshot.lots.flatMap((lot) => lot.rows.map((row) => row.sourceRow))).size;
     zip.file("MANIFIESTO.xlsx", workbookToArray(XLSX, createManifestWorkbook(XLSX, plan, { baseId, baseName: snapshot.baseName, generatedAt: new Date().toISOString(), filters: { source: "reservas_activas_confirmadas" } })));
     return attachment(await zip.generateAsync({ type: "arraybuffer" }), campaign ? `${campaign}_LOTES_CONFIRMADOS.zip` : "LOTES_COMERCIALES_CONFIRMADOS.zip", "application/zip");
-  } catch {
-    return Response.json({ error: "No se pudo preparar una descarga comercial confirmada." }, { status: 409 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "No se pudo preparar una descarga comercial confirmada." }, { status: 409 });
   }
 }

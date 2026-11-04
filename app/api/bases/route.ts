@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     }
     await beginBaseSave(payload as never);
     return Response.json({ ok: true }, { status: 201 });
-  } catch {
-    return Response.json({ error: "No se pudo iniciar el guardado." }, { status: 400 });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "No se pudo iniciar el guardado." }, { status: 400 });
   }
 }

@@ -5,7 +5,10 @@ import { useMemo, useState } from "react";
 import type { CampaignOperatorId, CampaignReport } from "@/lib/campaigns/campaign-engine";
 import {
   buildExportPlan,
+  createCampaignZip,
   createCompleteWorkbook,
+  createSingleCampaignZip,
+  createXlsxWorkbook,
   projectExportPlan,
   workbookToArray,
 } from "@/lib/export/xlsx-export";
@@ -109,9 +112,19 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
     setStatus({ message: "Generando ZIP local…", progress: `0 de ${totalBatches} lotes`, tone: "progress" });
 
     try {
-      await downloadConfirmedCommercial();
+      const [xlsx, JSZipModule] = await Promise.all([import("xlsx"), import("jszip")]);
+      const archive = await createCampaignZip(
+        xlsx,
+        new JSZipModule.default(),
+        masterOutput,
+        plan,
+        { baseId: batch.id, baseName: batch.displayName ?? batch.fileName, filters: settings, generatedAt: new Date().toISOString() },
+        (completed, total) => setStatus({ message: "Generando ZIP local de vista previa…", progress: `${completed} de ${total} lotes`, tone: "progress" }),
+        campaignOutput,
+      );
+      triggerDownload(archive, "VISTA_PREVIA_CAMPANAS.zip");
       onExportCompleted();
-      setStatus({ message: "ZIP confirmado preparado para descargar.", tone: "success" });
+      setStatus({ message: "ZIP local de vista previa preparado. No confirma ni reserva móviles.", tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el ZIP de campañas.", tone: "error" });
     }
@@ -125,9 +138,18 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
     }
     setStatus({ message: `Generando ZIP de ${campaign.folderName}…`, progress: `0 de ${campaign.batches.length} lotes`, tone: "progress" });
     try {
-      await downloadConfirmedCommercial(campaign.folderName);
+      const [xlsx, JSZipModule] = await Promise.all([import("xlsx"), import("jszip")]);
+      const archive = await createSingleCampaignZip(
+        xlsx,
+        new JSZipModule.default(),
+        campaignOutput,
+        campaign,
+        { baseId: batch.id, baseName: batch.displayName ?? batch.fileName, filters: settings, generatedAt: new Date().toISOString() },
+        (completed, total) => setStatus({ message: `Generando ZIP local de vista previa de ${campaign.folderName}…`, progress: `${completed} de ${total} lotes`, tone: "progress" }),
+      );
+      triggerDownload(archive, `VISTA_PREVIA_${campaign.folderName}.zip`);
       onExportCompleted();
-      setStatus({ message: `ZIP confirmado de ${campaign.folderName} preparado para descargar.`, tone: "success" });
+      setStatus({ message: `ZIP local de vista previa de ${campaign.folderName} preparado. No confirma ni reserva móviles.`, tone: "success" });
     } catch {
       setStatus({ message: `No se pudo generar el ZIP de ${campaign.folderName}.`, tone: "error" });
     }
@@ -145,9 +167,14 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
     setStatus({ message: `Preparando ${campaign.folderName}/${batch.fileName}…`, tone: "progress" });
 
     try {
-      await downloadConfirmedCommercial(campaign.folderName, batch.index);
+      const xlsx = await import("xlsx");
+      const workbook = createXlsxWorkbook(xlsx, campaignOutput.columns, batch.rows, campaign.folderName);
+      triggerDownload(
+        new Blob([workbookToArray(xlsx, workbook)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+        `${campaign.folderName}_${batch.fileName}`,
+      );
       onExportCompleted();
-      setStatus({ message: `${campaign.folderName}/${batch.fileName} confirmado preparado para descargar.`, tone: "success" });
+      setStatus({ message: `${campaign.folderName}/${batch.fileName} preparado como vista previa local. No confirma ni reserva móviles.`, tone: "success" });
     } catch {
       setStatus({ message: "No se pudo generar el lote seleccionado.", tone: "error" });
     }
@@ -157,7 +184,7 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
     <section aria-labelledby="exportacion-title" className="space-y-5">
       <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Salida local</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Vista previa local</p>
           <h2 id="exportacion-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">Exporta la base</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{batch.kind === "RECICLADA" ? "Los lotes CRM usan el contrato fijo de 24 encabezados; la base maestra mantiene su estructura interna original." : "Los archivos conservan los encabezados, el orden original y la procedencia de los registros."}</p>
         </div>
@@ -180,8 +207,8 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
 
       <section className="overflow-hidden border border-slate-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-          <div><p className="text-sm font-semibold text-slate-900">Exportación por campañas</p><p className="mt-1 text-sm leading-6 text-slate-600">Un ZIP incluye BASE_MAESTRA.xlsx, MANIFIESTO.xlsx y carpetas YOIGO/VODAFONE con lotes de hasta {settings.batchSize} registros{batch.kind === "RECICLADA" ? " en formato CRM de 24 columnas" : ""}.</p></div>
-          <button type="button" disabled={!canExportCampaigns || status.tone === "progress"} onClick={() => void downloadZip()} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Descargar ZIP de campañas</button>
+          <div><p className="text-sm font-semibold text-slate-900">Vista previa por campañas</p><p className="mt-1 text-sm leading-6 text-slate-600">Un ZIP local incluye BASE_MAESTRA.xlsx, MANIFIESTO.xlsx y carpetas YOIGO/VODAFONE con lotes de hasta {settings.batchSize} registros{batch.kind === "RECICLADA" ? " en formato CRM de 24 columnas" : ""}. No crea reservas ni confirma una distribución comercial.</p></div>
+          <button type="button" disabled={!canExportCampaigns || status.tone === "progress"} onClick={() => void downloadZip()} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300">Descargar ZIP de vista previa</button>
         </div>
         <div className="grid divide-y divide-slate-200 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Móviles únicos</p><p className="mt-1 text-xl font-semibold tabular-nums text-[#174ea6]">{plan.uniqueEligibleCount}</p></div>
@@ -190,7 +217,13 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Lotes</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{totalBatches}</p></div>
         </div>
         {plan.conflictCount > 0 ? <p role="status" className="border-t border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{plan.conflictCount} móviles son elegibles en más de una campaña. No hay una regla de exclusividad comercial configurada: el ZIP conserva ambas candidaturas para decisión humana, sin duplicarlos dentro de cada campaña.</p> : null}
-        {plan.campaigns.some((campaign) => campaign.batches.length > 0) ? <div className="border-t border-slate-200 px-4 py-4"><p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Descarga individual por campaña</p><div className="mt-3 flex flex-wrap gap-2">{plan.campaigns.filter((campaign) => campaign.batches.length > 0).map((campaign) => <button key={`${campaign.campaign}-zip`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadCampaign(campaign.campaign)} className="min-h-8 rounded-md border border-[#174ea6] bg-white px-2.5 text-xs font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">ZIP {campaign.folderName} · {campaign.eligibleCount} registros</button>)}{plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => <button key={`${campaign.campaign}-${batch.index}`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadSingleBatch(campaign.campaign, batch.index)} className="min-h-8 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">Descargar {campaign.folderName} · lote {batch.index} · {batch.rows.length} registros</button>))}</div></div> : <p className="px-4 py-4 text-sm text-slate-500">No hay lotes preparados con los filtros y campañas actuales.</p>}
+        {plan.campaigns.some((campaign) => campaign.batches.length > 0) ? <div className="border-t border-slate-200 px-4 py-4"><p className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">Descargas locales de vista previa</p><div className="mt-3 flex flex-wrap gap-2">{plan.campaigns.filter((campaign) => campaign.batches.length > 0).map((campaign) => <button key={`${campaign.campaign}-zip`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadCampaign(campaign.campaign)} className="min-h-8 rounded-md border border-[#174ea6] bg-white px-2.5 text-xs font-semibold text-[#174ea6] transition-colors hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">ZIP de vista previa {campaign.folderName} · {campaign.eligibleCount} registros</button>)}{plan.campaigns.flatMap((campaign) => campaign.batches.map((batch) => <button key={`${campaign.campaign}-${batch.index}`} type="button" disabled={status.tone === "progress"} onClick={() => void downloadSingleBatch(campaign.campaign, batch.index)} className="min-h-8 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 transition-colors hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60">Vista previa {campaign.folderName} · lote {batch.index} · {batch.rows.length} registros</button>))}</div></div> : <p className="px-4 py-4 text-sm text-slate-500">No hay lotes preparados con los filtros y campañas actuales.</p>}
+      </section>
+
+      <section className="border border-slate-200 bg-slate-50 px-4 py-4">
+        <p className="text-sm font-semibold text-slate-900">Descarga comercial confirmada</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">Solo está disponible después de confirmar la distribución en el paso anterior. El servidor usa exclusivamente los lotes persistidos y sus reservas activas.</p>
+        <button type="button" disabled={!batch.commercialDistributionConfirmed || status.tone === "progress"} onClick={() => void downloadConfirmedCommercial()} className="mt-3 inline-flex min-h-10 items-center justify-center rounded-md border border-emerald-700 bg-white px-3.5 text-sm font-semibold text-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">Descargar ZIP comercial confirmado</button>
       </section>
 
       <p aria-live="polite" className={`border px-4 py-3 text-sm ${status.tone === "error" ? "border-rose-200 bg-rose-50 text-rose-900" : status.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : status.tone === "progress" ? "border-blue-200 bg-blue-50 text-blue-900" : "border-slate-200 bg-white text-slate-600"}`}>{status.message}{status.progress ? ` ${status.progress}.` : ""}</p>

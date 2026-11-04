@@ -48,6 +48,7 @@ export interface StoredMetadata {
   operationalSourceRows?: number[];
   /** Client-side export was actually generated and download started. */
   exportCompletedAt?: string | null;
+  commercialDistributionConfirmed?: boolean;
   realHlrQueue?: StoredRealHlrQueuePlan | null;
   realHlrConsultationsByMobile?: Record<string, HlrConsultationMetadata>;
   historicalResultImport?: HistoricalResultImportSummary | null;
@@ -167,6 +168,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         kind: batch.kind,
         operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
         exportCompletedAt: batch.exportCompletedAt,
+        commercialDistributionConfirmed: batch.commercialDistributionConfirmed,
         realHlrQueue: batch.realHlrQueue,
         realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
         historicalResultImport: batch.historicalResultImport,
@@ -242,6 +244,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     historicalResultImport: base.metadata.historicalResultImport ?? base.metadata.historicalResultImports?.at(-1) ?? null,
     historicalResultImports: base.metadata.historicalResultImports ?? (base.metadata.historicalResultImport ? [base.metadata.historicalResultImport] : []),
     exportCompletedAt: base.metadata.exportCompletedAt ?? null,
+    commercialDistributionConfirmed: base.metadata.commercialDistributionConfirmed === true,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),
     realHlrQueue: base.metadata.realHlrQueue ?? null,
     realHlrConsultationsByMobile: base.metadata.realHlrConsultationsByMobile ?? {},

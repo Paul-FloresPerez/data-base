@@ -587,8 +587,8 @@ function exportOutput(recordCount: number) {
   };
 }
 
-test("planifica lotes de 0, 1, 100, 101 y 253 registros sin cambiar su orden", () => {
-  for (const count of [0, 1, 100, 101, 253]) {
+test("planifica lotes de 0, 1, 7, 68, 100, 101, 145 y 253 registros sin cambiar su orden", () => {
+  for (const count of [0, 1, 7, 68, 100, 101, 145, 253]) {
     const output = exportOutput(count);
     const report = buildCampaignReport(output, ["yoigo", "vodafone"]);
     const plan = buildExportPlan(report, ["yoigo"], MAX_BATCH_SIZE);
@@ -598,6 +598,13 @@ test("planifica lotes de 0, 1, 100, 101 y 253 registros sin cambiar su orden", (
     assert.equal(yoigo?.batches.length, count === 0 ? 0 : Math.ceil(count / 100));
     assert.deepEqual(yoigo?.batches.flatMap((batch) => batch.rows.map((row) => row.sourceRow)), output.rows.map((row) => row.sourceRow));
   }
+});
+
+test("parte 145 registros distribuibles en lotes de 100 y 45", () => {
+  const output = exportOutput(145);
+  const report = buildCampaignReport(output, ["yoigo"]);
+  const plan = buildExportPlan(report, ["yoigo"], 100);
+  assert.deepEqual(plan.campaigns[0]?.batches.map((batch) => batch.rows.length), [100, 45]);
 });
 
 test("incluye ambas campañas con lotes independientes según la matriz", () => {
