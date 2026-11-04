@@ -17,6 +17,7 @@ const expected = [
   "20261101120000_add_processing_jobs",
   "20261104090000_add_canonical_crm_files",
   "20261104100000_add_global_crm_mobile_lookup_index",
+  "20261104110000_add_global_recycling_execution",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -57,4 +58,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.doesNotMatch(sql[9]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
   assert.match(sql[10]!, /CREATE INDEX "registros_movil_normalizado_idx"/);
   assert.doesNotMatch(sql[10]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[11]!, /CREATE TABLE "ejecuciones_reciclajes_globales"/);
+  assert.match(sql[11]!, /CREATE TABLE "decisiones_ejecuciones_reciclajes_globales"/);
+  assert.doesNotMatch(sql[11]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });

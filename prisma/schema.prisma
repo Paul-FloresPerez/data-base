@@ -81,6 +81,20 @@ enum EstadoReservaComercial {
   LIBERADA
 }
 
+enum EstadoEjecucionReciclajeGlobal {
+  PREPARADA
+  EVALUANDO
+  EVALUADA
+  ERROR
+}
+
+enum DecisionReciclajeGlobal {
+  ELEGIBLE
+  EXCLUIDO
+  REVISION
+  BLOQUEADO
+}
+
 /// RECUPERABLE denotes a lease expiry or a retryable worker failure.
 enum EstadoTrabajoProcesamiento {
   PENDIENTE
@@ -121,6 +135,7 @@ model Base {
   lotesComoOriginal   Lote[]     @relation("LoteBaseOriginal")
   archivosTipificaciones ArchivoTipificaciones[]
   asociacionesArchivosCrm ArchivoCrmBase[] @relation("ArchivoCrmBaseOriginal")
+  ejecucionesReciclajeGlobal EjecucionReciclajeGlobalBase[]
   ejecucionesReciclaje EjecucionReciclaje[]
   ejecucionGeneradora EjecucionReciclaje? @relation("BaseReciclada")
   gestionesTipificacion GestionTipificacion[]
@@ -219,6 +234,7 @@ model ArchivoCrmCanonico {
   archivoTipificacionesLegacy     ArchivoTipificaciones? @relation("ArchivoCrmCanonicoLegacy", fields: [archivoTipificacionesLegacyId], references: [id], onDelete: Restrict)
   asociaciones                    ArchivoCrmBase[]
   filas                           FilaArchivoCrm[]
+  ejecucionesGlobales             EjecucionReciclajeGlobalArchivo[]
 
   @@index([importadoEn])
   @@map("archivos_crm_canonicos")
@@ -248,6 +264,11 @@ model FilaArchivoCrm {
   hojaOrigen         String              @map("hoja_origen")
   numeroFilaOrigen   Int                 @map("numero_fila_origen")
   movilNormalizado   String?             @map("movil_normalizado")
+  fechaGestion       DateTime?           @map("fecha_gestion") @db.Date
+  tipificacionOriginal String?           @map("tipificacion_original")
+  tipificacionNormalizada String?        @map("tipificacion_normalizada")
+  ventaConfirmada    Boolean             @default(false) @map("venta_confirmada")
+  evidenciaVenta     String?             @map("evidencia_venta")
   datosOriginales    Json                @map("datos_originales")
   metadatos          Json
   creadoEn           DateTime            @default(now()) @map("creado_en")
@@ -257,6 +278,78 @@ model FilaArchivoCrm {
   @@index([movilNormalizado])
   @@index([archivoCrmId, movilNormalizado])
   @@map("filas_archivos_crm")
+}
+
+/// Immutable, global recycling snapshot. It is deliberately separate from
+/// EjecucionReciclaje, which remains the legacy single-base workflow.
+model EjecucionReciclajeGlobal {
+  id              String                         @id @default(uuid()) @db.Uuid
+  operacionId     String                         @unique @map("operacion_id")
+  usuarioId       String                         @map("usuario_id") @db.Uuid
+  fechaEfectiva   DateTime                       @map("fecha_efectiva") @db.Date
+  estado          EstadoEjecucionReciclajeGlobal @default(PREPARADA)
+  versionReglas   String                         @map("version_reglas")
+  criterios       Json
+  resumen         Json?
+  creadoEn        DateTime                       @default(now()) @map("creado_en")
+  evaluadoEn      DateTime?                      @map("evaluado_en")
+  usuario         Usuario                        @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  archivos        EjecucionReciclajeGlobalArchivo[]
+  bases           EjecucionReciclajeGlobalBase[]
+  decisiones      DecisionEjecucionReciclajeGlobal[]
+
+  @@index([usuarioId, creadoEn])
+  @@index([estado, creadoEn])
+  @@map("ejecuciones_reciclajes_globales")
+}
+
+/// File membership and immutable source metadata for a global execution.
+model EjecucionReciclajeGlobalArchivo {
+  id              String                    @id @default(uuid()) @db.Uuid
+  ejecucionId     String                    @map("ejecucion_id") @db.Uuid
+  archivoCrmId    String                    @map("archivo_crm_id") @db.Uuid
+  importacionId   String                    @map("importacion_id")
+  nombreArchivo   String                    @map("nombre_archivo")
+  metadatos       Json
+  creadoEn        DateTime                  @default(now()) @map("creado_en")
+  ejecucion       EjecucionReciclajeGlobal  @relation(fields: [ejecucionId], references: [id], onDelete: Restrict)
+  archivoCrm      ArchivoCrmCanonico        @relation(fields: [archivoCrmId], references: [id], onDelete: Restrict)
+
+  @@unique([ejecucionId, archivoCrmId])
+  @@index([archivoCrmId])
+  @@map("ejecuciones_reciclajes_globales_archivos")
+}
+
+/// Universe of valid ORIGINAL bases captured before the global evaluation.
+model EjecucionReciclajeGlobalBase {
+  id              String                    @id @default(uuid()) @db.Uuid
+  ejecucionId     String                    @map("ejecucion_id") @db.Uuid
+  baseOriginalId  String                    @map("base_original_id") @db.Uuid
+  codigoBase      String                    @map("codigo_base")
+  resumen         Json
+  creadoEn        DateTime                  @default(now()) @map("creado_en")
+  ejecucion       EjecucionReciclajeGlobal  @relation(fields: [ejecucionId], references: [id], onDelete: Restrict)
+  baseOriginal    Base                      @relation(fields: [baseOriginalId], references: [id], onDelete: Restrict)
+
+  @@unique([ejecucionId, baseOriginalId])
+  @@index([baseOriginalId])
+  @@map("ejecuciones_reciclajes_globales_bases")
+}
+
+/// One immutable decision per normalized mobile and global execution.
+model DecisionEjecucionReciclajeGlobal {
+  id              String                    @id @default(uuid()) @db.Uuid
+  ejecucionId     String                    @map("ejecucion_id") @db.Uuid
+  movilNormalizado String                   @map("movil_normalizado")
+  decision        DecisionReciclajeGlobal
+  motivo          String
+  fuentes         Json
+  creadoEn        DateTime                  @default(now()) @map("creado_en")
+  ejecucion       EjecucionReciclajeGlobal  @relation(fields: [ejecucionId], references: [id], onDelete: Restrict)
+
+  @@unique([ejecucionId, movilNormalizado])
+  @@index([ejecucionId, decision])
+  @@map("decisiones_ejecuciones_reciclajes_globales")
 }
 
 /// Future recycling executions must reference exactly one manually selected original base.
@@ -450,6 +543,7 @@ model Usuario {
   exportaciones RegistroExportacion[]
   aprobacionesHlr AprobacionHlr[]
   ejecucionesReciclaje EjecucionReciclaje[]
+  ejecucionesReciclajeGlobal EjecucionReciclajeGlobal[]
   importacionesVentas ImportacionVentas[]
   reservasCreadas ReservaComercial[] @relation("ReservaCreador")
   reservasLiberadas ReservaComercial[] @relation("ReservaLiberador")
