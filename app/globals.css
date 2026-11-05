@@ -60,9 +60,78 @@ a {
   color: #102a56;
 }
 
+main section[class~="border"][class~="bg-white"],
+main section[class~="border"][class~="bg-slate-50"],
+main details[class~="border"] {
+  border-radius: 0.75rem;
+}
+
+main details[class~="border"] {
+  overflow: clip;
+}
+
+main details[class~="border"] > summary {
+  min-height: 2.75rem;
+  padding: 0.875rem 1rem;
+  background: #f8fafc;
+  list-style: none;
+}
+
+main details[class~="border"] > summary::-webkit-details-marker {
+  display: none;
+}
+
+main details[class~="border"][open] > summary {
+  border-bottom: 1px solid var(--border);
+  background: #ffffff;
+}
+
+main [role="dialog"] > section,
+main [role="alertdialog"] > section {
+  border-radius: 0.75rem;
+  box-shadow: 0 18px 45px rgb(16 27 47 / 0.16);
+}
+
+main [role="status"],
+main [role="alert"] {
+  border-radius: 0.5rem;
+}
+
+main section[aria-labelledby="mis-bases-title"] > section {
+  overflow: clip;
+}
+
+main section[aria-labelledby="mis-bases-title"] > section > :first-child {
+  background: #fbfcfe;
+}
+
+main section:has(> input[type="file"]) > div:nth-of-type(2) {
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+main section:has(> input[type="file"]) > section {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #ffffff;
+}
+
+@keyframes operations-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   button, a, input, select, textarea {
     transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+  }
+
+  main details[open] > :not(summary) {
+    animation: operations-reveal 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 }
 
