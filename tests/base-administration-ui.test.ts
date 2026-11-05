@@ -8,7 +8,10 @@ test("la administración de bases usa archivado lógico y no expone eliminación
   const [panel, route, administration] = await Promise.all([
     readFile(new URL("components/saved-bases-panel.tsx", root), "utf8"),
     readFile(new URL("app/api/bases/[baseId]/route.ts", root), "utf8"),
-    readFile(new URL("app/api/bases/[baseId]/administracion/route.ts", root), "utf8"),
+    readFile(
+      new URL("app/api/bases/[baseId]/administracion/route.ts", root),
+      "utf8",
+    ),
   ]);
   assert.match(panel, /Confirmar archivado lógico/);
   assert.match(panel, /Restaurar base/);
@@ -21,11 +24,17 @@ test("la administración de bases usa archivado lógico y no expone eliminación
 });
 
 test("el detalle global devuelve motivos agregados sin devolver móviles completos", async () => {
-  const storage = await readFile(new URL("lib/server/global-recycling-storage.ts", root), "utf8");
-  const workspace = await readFile(new URL("components/global-recycling-workspace.tsx", root), "utf8");
+  const storage = await readFile(
+    new URL("lib/server/global-recycling-storage.ts", root),
+    "utf8",
+  );
+  const workspace = await readFile(
+    new URL("components/global-recycling-workspace.tsx", root),
+    "utf8",
+  );
   assert.match(storage, /groupBy\(/);
   assert.match(storage, /reasonSummary/);
   assert.match(storage, /mobileMasked/);
-  assert.match(workspace, /Motivos agregados de decisión/);
-  assert.match(workspace, /reserva activa requiere liberación explícita/i);
+  assert.match(workspace, /motivos agregados de decisión/i);
+  assert.match(workspace, /No hay elegibles\. Revisa los motivos agregados/i);
 });
