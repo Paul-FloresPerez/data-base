@@ -51,7 +51,7 @@ try {
   if (await db.gestionTipificacion.count({ where: { id: historical.id } }) !== 1) throw new Error("Legacy history was modified.");
   console.log(JSON.stringify({ target: "test", testRunId: run, decisions: 8, idempotent: true, concurrent: true, snapshotsImmutable: true, fixturesCleaned: true }));
 } finally {
-  const ex = await db.ejecucionReciclajeGlobal.findMany({ where: { operacionId: { startsWith: "rg3-" } }, select: { id: true } }); const eids = ex.map((x) => x.id);
+  const ex = await db.ejecucionReciclajeGlobal.findMany({ where: { operacionId: { in: [`rg3-op-${run}`, `rg3-next-${run}`] } }, select: { id: true } }); const eids = ex.map((x) => x.id);
   if (eids.length) await db.decisionEjecucionReciclajeGlobal.deleteMany({ where: { ejecucionId: { in: eids } } });
   if (eids.length) await db.ejecucionReciclajeGlobalBase.deleteMany({ where: { ejecucionId: { in: eids } } });
   if (eids.length) await db.ejecucionReciclajeGlobalArchivo.deleteMany({ where: { ejecucionId: { in: eids } } });

@@ -9,6 +9,7 @@ export interface HistoricalBaseSummary {
   imported: number;
   valid: number;
   excluded: number;
+  archivedAt?: string | null;
 }
 
 export interface HistoricalBaseFilters {
@@ -25,7 +26,7 @@ export function formatBaseCode(receivedAt: Date, sequence: number): string {
   return `BAS-${period}-${String(sequence).padStart(4, "0")}`;
 }
 
-export function filterHistoricalBases(bases: readonly HistoricalBaseSummary[], filters: HistoricalBaseFilters): HistoricalBaseSummary[] {
+export function filterHistoricalBases<T extends HistoricalBaseSummary>(bases: readonly T[], filters: HistoricalBaseFilters): T[] {
   const query = filters.query?.trim().toLocaleLowerCase("es-ES") ?? "";
   return bases.filter((base) => {
     const receivedAt = base.receivedAt ?? "";

@@ -316,12 +316,18 @@ export async function getGlobalRecyclingExecution(executionId: string, input: { 
     select: { id: true, estado: true, versionReglas: true, criterios: true, resumen: true, creadoEn: true, evaluadoEn: true, baseRecicladaId: true, usuario: { select: { username: true } }, archivos: { select: { id: true, nombreArchivo: true, importacionId: true } }, _count: { select: { bases: true, decisiones: true } } },
   });
   if (!execution) return null;
-  const decisions = await prisma.decisionEjecucionReciclajeGlobal.findMany({
+  const [decisions, reasonGroups] = await Promise.all([
+    prisma.decisionEjecucionReciclajeGlobal.findMany({
     where: { ejecucionId: executionId, ...(input.cursor ? { movilNormalizado: { gt: input.cursor } } : {}) }, orderBy: { movilNormalizado: "asc" }, take: limit + 1,
     select: { movilNormalizado: true, decision: true, motivo: true, fuentes: true, creadoEn: true },
-  });
+    }),
+    prisma.decisionEjecucionReciclajeGlobal.groupBy({
+      by: ["decision", "motivo"], where: { ejecucionId: executionId }, _count: { _all: true },
+    }),
+  ]);
   const rows = decisions.slice(0, limit);
-  return { id: execution.id, status: execution.estado, ruleVersion: execution.versionReglas, criteria: execution.criterios, summary: execution.resumen, createdAt: execution.creadoEn.toISOString(), evaluatedAt: execution.evaluadoEn?.toISOString() ?? null, recycledBaseId: execution.baseRecicladaId, user: execution.usuario.username, files: execution.archivos, bases: execution._count.bases, decisions: rows.map((row) => ({ mobileMasked: `${row.movilNormalizado.slice(0, 3)}••••${row.movilNormalizado.slice(-2)}`, decision: row.decision, reason: row.motivo, evidence: row.fuentes, createdAt: row.creadoEn.toISOString() })), nextCursor: decisions.length > limit ? rows.at(-1)?.movilNormalizado ?? null : null };
+  const reasonSummary = reasonGroups.map((group) => ({ decision: group.decision, reason: group.motivo, count: group._count._all })).sort((left, right) => right.count - left.count || left.reason.localeCompare(right.reason, "es"));
+  return { id: execution.id, status: execution.estado, ruleVersion: execution.versionReglas, criteria: execution.criterios, summary: execution.resumen, reasonSummary, createdAt: execution.creadoEn.toISOString(), evaluatedAt: execution.evaluadoEn?.toISOString() ?? null, recycledBaseId: execution.baseRecicladaId, user: execution.usuario.username, files: execution.archivos, bases: execution._count.bases, decisions: rows.map((row) => ({ mobileMasked: `${row.movilNormalizado.slice(0, 3)}••••${row.movilNormalizado.slice(-2)}`, decision: row.decision, reason: row.motivo, evidence: row.fuentes, createdAt: row.creadoEn.toISOString() })), nextCursor: decisions.length > limit ? rows.at(-1)?.movilNormalizado ?? null : null };
 }
 
 /** Final server-side confirmation. It creates no lots, reservations or sales. */

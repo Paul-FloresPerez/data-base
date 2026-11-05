@@ -188,7 +188,7 @@ try {
     throw new Error("CRM conciliation did not distinguish original, external, and invalid rows.");
   }
   const firstEvaluation = await finalizeIntelligentRecycling(first.id, ids.user);
-  if (firstEvaluation.summary?.ELEGIBLE !== 2 || firstEvaluation.summary?.REVISION_PERMANENCIA !== 1 || firstEvaluation.summary?.BLOQUEADO_VENTA !== 1 || firstEvaluation.summary?.REVISION_CONFLICTO !== 1) {
+  if (firstEvaluation.summary?.ELEGIBLE !== 2 || firstEvaluation.summary?.REVISION_GESTION !== 1 || firstEvaluation.summary?.BLOQUEADO_VENTA !== 1 || firstEvaluation.summary?.REVISION_CONFLICTO !== 1) {
     throw new Error("First historical execution did not retain expected commercial decisions.");
   }
   const firstHistory = await getRecyclingExecution(first.id);
@@ -204,7 +204,7 @@ try {
   const secondImport = await appendManagements(second.id, ids.secondFile, "CRM_NOVIEMBRE_OTRA_NOMENCLATURA.xlsx", secondRows);
   if (secondImport.appended.accepted !== 6) throw new Error("The second CRM history was not persisted independently.");
   const secondEvaluation = await finalizeIntelligentRecycling(second.id, ids.user);
-  if (secondEvaluation.summary?.ELEGIBLE !== 3 || secondEvaluation.summary?.BLOQUEADO_VENTA !== 1 || secondEvaluation.summary?.REVISION_CONFLICTO !== 1 || secondEvaluation.summary?.evaluated !== 5) {
+  if (secondEvaluation.summary?.ELEGIBLE !== 2 || secondEvaluation.summary?.REVISION_GESTION !== 1 || secondEvaluation.summary?.BLOQUEADO_VENTA !== 1 || secondEvaluation.summary?.REVISION_CONFLICTO !== 1 || secondEvaluation.summary?.evaluated !== 5) {
     throw new Error("The later execution did not reevaluate permanence or exclude invalid and duplicate source records.");
   }
   const firstHistoryAgain = await getRecyclingExecution(first.id);
@@ -215,7 +215,7 @@ try {
   if (confirmed.reused || confirmed.baseId !== retriedConfirmation.baseId || !retriedConfirmation.reused) throw new Error("Recycling confirmation was not idempotent.");
   recycledBaseId = confirmed.baseId;
   const recycledBeforeDistribution = await getSavedBase(recycledBaseId);
-  if (!recycledBeforeDistribution || recycledBeforeDistribution.records.length !== 3) throw new Error("Generated recycled base did not contain exactly eligible original records.");
+  if (!recycledBeforeDistribution || recycledBeforeDistribution.records.length !== 2) throw new Error("Generated recycled base did not contain exactly eligible original records.");
 
   const batch = restoreBatch(recycledBeforeDistribution as LoadedBase);
   batch.distribution = { batchSize: 100, selectedCampaigns: ["yoigo", "vodafone"] };
@@ -228,15 +228,15 @@ try {
 
   const snapshot = await prepareCommercialExport({ baseId: recycledBaseId, userId: ids.user });
   const output = buildCrmRecyclingOutput({ columns: snapshot.columns, rows: snapshot.lots.flatMap((lot) => lot.rows) });
-  if (snapshot.lots.reduce((total, lot) => total + lot.rows.length, 0) !== 3 || JSON.stringify(output.columns) !== JSON.stringify(CRM_RECYCLING_HEADERS)) {
+  if (snapshot.lots.reduce((total, lot) => total + lot.rows.length, 0) !== 2 || JSON.stringify(output.columns) !== JSON.stringify(CRM_RECYCLING_HEADERS)) {
     throw new Error("Commercial export did not preserve its confirmed rows or exact CRM headers.");
   }
   const retriedExport = await prepareCommercialExport({ baseId: recycledBaseId, userId: ids.user });
   if (retriedExport.lots.length !== snapshot.lots.length) throw new Error("Commercial download retry was not idempotent.");
   const activeReservations = await prisma.reservaComercial.count({ where: { baseId: recycledBaseId, estado: "ACTIVA" } });
-  if (activeReservations !== 3) throw new Error("Confirmed commercial export lacks matching active reservations.");
+  if (activeReservations !== 2) throw new Error("Confirmed commercial export lacks matching active reservations.");
 
-  console.log(JSON.stringify({ target: "test", testRunId, fullCircuit: true, historicalExecutions: 2, recycledRecords: 3, commercialLots: lots.length, crmHeaders: 24, providerCalls: 0 }));
+  console.log(JSON.stringify({ target: "test", testRunId, fullCircuit: true, historicalExecutions: 2, recycledRecords: 2, commercialLots: lots.length, crmHeaders: 24, providerCalls: 0 }));
 } finally {
   const baseIds = [ids.original, ...(recycledBaseId ? [recycledBaseId] : [])];
   const executionIds = (await prisma.ejecucionReciclaje.findMany({ where: { operacionId: { in: [ids.firstExecution, ids.secondExecution] } }, select: { id: true } })).map((entry) => entry.id);
