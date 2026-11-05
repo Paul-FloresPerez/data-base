@@ -45,10 +45,10 @@ export function DashboardOverview({
 }: DashboardOverviewProps) {
   return (
     <section aria-labelledby="dashboard-title" className="space-y-5">
-      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Centro de operaciones</p>
-          <h2 id="dashboard-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">{batch ? "Estado de la base" : "Prepara una base de trabajo"}</h2>
+          <h2 id="dashboard-title" className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-[#101b2f] sm:text-4xl">{batch ? "Estado de la base" : "Prepara una base de trabajo"}</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{batch ? "Consulta el avance sin mostrar contactos ni datos identificativos en este panel." : "Importa un Excel para crear una base independiente que se procesa únicamente en esta sesión."}</p>
         </div>
         <button type="button" onClick={() => onNavigate(nextModule)} className="inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">
@@ -57,14 +57,14 @@ export function DashboardOverview({
       </div>
 
       {batch ? (
-        <section aria-label="Base activa" className="border border-slate-200 bg-white">
+        <section aria-label="Base activa" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,27,47,0.04)]">
           <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Base activa</p>
               <p className="mt-1 truncate text-sm font-semibold text-slate-900" title={batch.fileName}>{batch.fileName}</p>
               <p className="mt-1 text-xs text-slate-500">Creada {formatCreatedAt(batch.createdAt)} · ID {batch.id.slice(0, 8)}</p>
             </div>
-            <span className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-[#174ea6]">{batch.status.replaceAll("_", " ")}</span>
+            <span className="inline-flex w-fit rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-[#174ea6]">{batch.status.replaceAll("_", " ")}</span>
           </div>
           <div className="grid divide-y divide-slate-200 sm:grid-cols-5 sm:divide-x sm:divide-y-0">
             <StatusCard label="Importados" value={imported} tone="blue" hint="Archivo activo" />
@@ -75,7 +75,7 @@ export function DashboardOverview({
           </div>
         </section>
       ) : (
-        <section className="border border-dashed border-slate-300 bg-white px-5 py-10 text-center">
+        <section className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
           <p className="text-sm font-semibold text-slate-900">No hay una base activa</p>
           <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-600">Cada importación inicia una base aislada. Los datos se mantienen solo mientras la página sigue abierta.</p>
           <button type="button" onClick={() => onNavigate("importacion")} className="mt-5 text-sm font-semibold text-[#174ea6] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6]">Seleccionar un Excel</button>

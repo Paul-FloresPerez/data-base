@@ -90,30 +90,30 @@ export function AppShell({ activeModule, batch, children, onNavigate, onOpenProc
   const activeItem = isProcessing ? { label: "Procesar base" } : primaryModules.find((item) => item.id === activeModule) ?? primaryModules[0];
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-slate-800 bg-[#101828] px-3 py-5 text-slate-200 lg:flex">
-        <div className="border-b border-slate-800 px-3 pb-5">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-blue-300">Data-base</p>
-          <p className="mt-2 text-lg font-semibold tracking-tight text-white">Operaciones de bases</p>
-          <p className="mt-1 text-xs leading-5 text-slate-400">Preparación, campañas y trazabilidad.</p>
+    <div className="min-h-screen bg-[#f5f7fa] text-slate-900">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col border-r border-[#203453] bg-[#101b2f] px-4 py-6 text-slate-200 lg:flex">
+        <div className="border-b border-[#29415f] px-3 pb-6">
+          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-200">Data-base</p>
+          <p className="mt-2 text-xl font-semibold tracking-[-0.02em] text-white">Operaciones</p>
+          <p className="mt-1 text-xs leading-5 text-slate-400">Bases, decisiones y trazabilidad comercial.</p>
         </div>
 
-        <p className="mt-7 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Navegación</p>
+        <p className="mt-8 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Espacios de trabajo</p>
         <nav aria-label="Secciones principales" className="mt-2 space-y-1">
           {primaryModules.map((item) => {
             const active = item.id === "procesar" ? isProcessing : item.id === activeModule;
-            return <button key={item.id} type="button" onClick={() => item.id === "procesar" ? onOpenProcessing() : onNavigate(item.id)} aria-current={active ? "page" : undefined} className={`w-full rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 ${active ? "bg-[#1d4f9f] text-white" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}><span className="block text-sm font-semibold">{item.label}</span><span className={`mt-0.5 block text-[11px] ${active ? "text-blue-100" : "text-slate-500"}`}>{item.description}</span></button>;
+            return <button key={item.id} type="button" onClick={() => item.id === "procesar" ? onOpenProcessing() : onNavigate(item.id)} aria-current={active ? "page" : undefined} className={`w-full rounded-lg px-3 py-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 ${active ? "bg-[#2457a7] text-white shadow-[0_6px_18px_rgba(0,0,0,0.16)]" : "text-slate-300 hover:bg-[#182943] hover:text-white"}`}><span className="block text-sm font-semibold">{item.label}</span><span className={`mt-0.5 block text-[11px] ${active ? "text-blue-100" : "text-slate-500"}`}>{item.description}</span></button>;
           })}
         </nav>
 
-        <div className="mt-auto border-t border-slate-800 px-3 pt-4 text-xs leading-5 text-slate-400">
-          <p className="font-medium text-slate-300">Base aislada por sesión</p>
-          <p className="mt-1">Guarda el avance en Mis bases cuando lo necesites.</p>
+        <div className="mt-auto border-t border-[#29415f] px-3 pt-5 text-xs leading-5 text-slate-400">
+          <p className="font-medium text-slate-200">Operación con trazabilidad</p>
+          <p className="mt-1">El guardado conserva el avance sin liberar reservas ni historial.</p>
         </div>
       </aside>
 
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-2.5 backdrop-blur sm:px-6 lg:px-8">
+      <div className="lg:pl-72">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{batch ? "Base de trabajo activa" : "Espacio de trabajo"}</p>
@@ -149,7 +149,7 @@ export function AppShell({ activeModule, batch, children, onNavigate, onOpenProc
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 lg:px-8 lg:py-5">
+        <main className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
           <Workflow onNavigate={onNavigate} workflow={workflow} />
           <div className="mt-5">{children}</div>
         </main>
