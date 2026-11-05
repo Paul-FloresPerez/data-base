@@ -5,6 +5,7 @@ import { buildCampaignReport } from "../lib/campaigns/campaign-engine.ts";
 import { buildExportPlan } from "../lib/export/xlsx-export.ts";
 import { extractArchiveWorkbooks, fingerprintBytes, importIdFromFingerprint, isSafeArchivePath, isSupportedWorkbookPath } from "../lib/recycling/archive-import.ts";
 import JSZip from "jszip";
+import XLSX from "xlsx";
 
 const headers = ["Fecha", "Telefono Movil", "Tipificacion", "Usado"];
 test("consolida por móvil sin excluir USADO/SI y mantiene la procedencia de cada gestión", () => {
@@ -80,4 +81,25 @@ test("informa un ZIP corrupto sin impedir que otra fuente se procese", async () 
  const good=new JSZip(); good.file("datos.xlsx",new Uint8Array([4,5,6]));
  const valid=await extractArchiveWorkbooks("correcto.zip",await good.generateAsync({type:"arraybuffer"}));
  assert.equal(valid.workbooks.length,1);
+});
+
+test("admite CSV dentro de ZIP con la misma procedencia y controles de seguridad", async () => {
+ const zip=new JSZip(); zip.file("periodo/datos.csv","Telefono Movil,Tipificacion\n612345678,NO RESPONDE");
+ const extracted=await extractArchiveWorkbooks("crm.zip",await zip.generateAsync({type:"arraybuffer"}));
+ assert.equal(extracted.workbooks.length,1);
+ assert.deepEqual(extracted.workbooks[0] && [extracted.workbooks[0].fileName, extracted.workbooks[0].zipName, extracted.workbooks[0].internalPath],["datos.csv","crm.zip","periodo/datos.csv"]);
+ assert.equal(isSupportedWorkbookPath("periodo/datos.csv"),true);
+});
+
+test("extrae y lee cinco XLSX CRM de un ZIP sin perder hoja Datos", async () => {
+ const zip=new JSZip();
+ for(let index=0;index<5;index+=1){
+  const book=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([["Teléfono Movil","Tipificación"],[`61234567${index}`,"NO RESPONDE"]]),"Datos");
+  zip.file(`lote-${index + 1}.xlsx`,XLSX.write(book,{type:"array",bookType:"xlsx"}));
+ }
+ const extracted=await extractArchiveWorkbooks("cinco.zip",await zip.generateAsync({type:"arraybuffer"}));
+ assert.equal(extracted.rejected.length,0); assert.equal(extracted.workbooks.length,5);
+ assert.ok(extracted.workbooks.every((file)=>{
+  const book=XLSX.read(file.bytes,{cellText:true}); return book.SheetNames.includes("Datos") && String(XLSX.utils.sheet_to_json<string[]>(book.Sheets.Datos!,{header:1})[1]?.[0]??"").startsWith("61234567");
+ }));
 });

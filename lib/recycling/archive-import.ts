@@ -42,7 +42,7 @@ export function isSafeArchivePath(path: string): boolean {
 }
 
 export function isSupportedWorkbookPath(path: string): boolean {
-  return /\.xlsx$/i.test(path) && !temporaryOrHiddenSegment.test(path);
+  return /\.(xlsx|csv)$/i.test(path) && !temporaryOrHiddenSegment.test(path);
 }
 
 export async function fingerprintBytes(bytes: ArrayBuffer): Promise<string> {

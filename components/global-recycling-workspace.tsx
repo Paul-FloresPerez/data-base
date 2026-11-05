@@ -6,6 +6,15 @@ import {
   normalizeRecyclingTipification,
 } from "@/lib/recycling/intelligent-recycling";
 import {
+  defaultRecyclingImportLimits,
+  extractArchiveWorkbooks,
+  fingerprintBytes,
+  importIdFromFingerprint,
+} from "@/lib/recycling/archive-import";
+import {
+  analyzeRecyclingFiles,
+} from "@/lib/recycling/recycling";
+import {
   restoreBatch,
   type LoadedBase,
 } from "@/lib/persistence/workspace-persistence";
@@ -17,6 +26,8 @@ type Parsed = {
   sheet: string;
   headers: string[];
   rows: string[][];
+  zipName?: string;
+  internalPath?: string;
 };
 type Summary = {
   logicalMobiles: number;
@@ -31,6 +42,8 @@ type Execution = {
   recycledBaseId: string | null;
 };
 type Reason = { decision: string; reason: string; count: number };
+type FileIssue = { fileName: string; reason: string };
+type FileProgress = "LISTO" | "REGISTRANDO" | "REGISTRADO" | "CONCILIANDO" | "CONCILIADO" | "ERROR";
 async function api<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const r = await fetch(input, {
     ...init,
@@ -51,12 +64,6 @@ const norm = (v: string) =>
     .replace(/[^a-z0-9]/g, "");
 const col = (h: string[], n: string[]) =>
   h.findIndex((x) => n.includes(norm(x)));
-async function hash(b: ArrayBuffer) {
-  const d = await crypto.subtle.digest("SHA-256", b);
-  return [...new Uint8Array(d)]
-    .map((x) => x.toString(16).padStart(2, "0"))
-    .join("");
-}
 function Step({
   number,
   title,
@@ -95,8 +102,11 @@ export function GlobalRecyclingWorkspace({
   onOpen: (b: WorkingBatch) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [parsed, setParsed] = useState<Parsed | null>(null),
-    [fileId, setFileId] = useState<string | null>(null),
+  const [parsed, setParsed] = useState<Parsed[]>([]),
+    [fileIds, setFileIds] = useState<string[]>([]),
+    [fileProgress, setFileProgress] = useState<Record<string, FileProgress>>({}),
+    [issues, setIssues] = useState<FileIssue[]>([]),
+    [duplicateFiles, setDuplicateFiles] = useState(0),
     [summary, setSummary] = useState<Summary | null>(null),
     [preview, setPreview] = useState<Preview | null>(null),
     [selected, setSelected] = useState<Set<string>>(
@@ -106,101 +116,109 @@ export function GlobalRecyclingWorkspace({
     [reasons, setReasons] = useState<Reason[]>([]),
     [busy, setBusy] = useState<string | null>(null),
     [message, setMessage] = useState<string | null>(null);
-  const mobile = useMemo(
+  const sourceAnalysis = useMemo(
     () =>
-      parsed
-        ? col(parsed.headers, [
+      analyzeRecyclingFiles(
+        parsed.map((file) => ({
+          fileName: file.fileName,
+          importId: file.importId,
+          zipName: file.zipName,
+          internalPath: file.internalPath,
+          sheetName: file.sheet,
+          columns: file.headers,
+          rows: file.rows,
+        })),
+      ),
+    [parsed],
+  );
+  const mobileColumn = (file: Parsed) =>
+    col(file.headers, [
             "telefonomovil",
             "telefonosmovil",
             "movil",
             "celular",
             "nums",
             "numeroemitido",
-          ])
-        : -1,
-    [parsed],
-  );
-  const tip = useMemo(
-    () => (parsed ? col(parsed.headers, ["tipificacion", "resultado"]) : -1),
-    [parsed],
-  );
-  const date = useMemo(
-    () =>
-      parsed
-        ? col(parsed.headers, ["fecha", "fechagestion", "fechainstalacion"])
-        : -1,
-    [parsed],
-  );
-  const sale = useMemo(
-    () =>
-      parsed
-        ? col(parsed.headers, [
-            "ventaconfirmada",
-            "venta",
-            "estadoventa",
-            "estadocomercial",
-          ])
-        : -1,
-    [parsed],
-  );
+          ]);
+  const fieldColumns = (file: Parsed) => ({
+    mobile: mobileColumn(file),
+    tip: col(file.headers, ["tipificacion", "resultado"]),
+    date: col(file.headers, ["fecha", "fechagestion", "fechainstalacion"]),
+    sale: col(file.headers, ["ventaconfirmada", "venta", "estadoventa", "estadocomercial"]),
+  });
   const tips = useMemo<string[]>(
     () =>
-      !parsed || tip < 0
-        ? []
-        : [
-            ...new Set(
-              parsed.rows
-                .map((r) => normalizeRecyclingTipification(r[tip] ?? ""))
-                .filter(Boolean),
-            ),
-          ].sort(),
-    [parsed, tip],
+      [...new Set(sourceAnalysis.records.map((record) => normalizeRecyclingTipification(record.tipification)).filter(Boolean))].sort(),
+    [sourceAnalysis],
   );
   const found = summary ? summary.logicalMobiles - summary.unmatched : 0;
   const toggle = (t: string) =>
     setSelected((s) => {
       const n = new Set(s);
-      n.has(t) ? n.delete(t) : n.add(t);
+      if (n.has(t)) n.delete(t);
+      else n.add(t);
       return n;
     });
   async function select(e: ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
+    const sources = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!f) return;
-    setBusy("Leyendo Excel…");
+    if (!sources.length) return;
+    setBusy("Leyendo archivos CRM…");
     setMessage(null);
-    setFileId(null);
+    setFileIds([]);
+    setFileProgress({});
+    setIssues([]);
+    setDuplicateFiles(0);
     setSummary(null);
     setPreview(null);
     setExecution(null);
     setReasons([]);
     try {
-      if (!/\.xlsx$/i.test(f.name))
-        throw new Error("Selecciona un archivo XLSX del CRM.");
-      const b = await f.arrayBuffer(),
-        X = (await import("xlsx")).default ?? (await import("xlsx")),
-        w = X.read(b, { cellText: true }),
-        sheet =
-          w.SheetNames.find((n) => n.toLocaleLowerCase("es-ES") === "datos") ??
-          w.SheetNames[0];
-      if (!sheet || !w.Sheets[sheet])
-        throw new Error("El Excel no contiene una hoja legible.");
-      const values = X.utils.sheet_to_json<string[]>(w.Sheets[sheet], {
-          header: 1,
-          raw: false,
-          defval: "",
-        }),
-        headers = (values[0] ?? []).map(String);
-      if (!headers.some((v) => v.trim()))
-        throw new Error("El Excel no contiene encabezados legibles.");
-      setParsed({
-        fileName: f.name,
-        importId: crypto.randomUUID(),
-        fingerprint: await hash(b),
-        sheet,
-        headers,
-        rows: values.slice(1).map((r) => r.map(String)),
-      });
+      const workbooks: { fileName: string; zipName?: string; internalPath?: string; bytes: ArrayBuffer; fingerprint: string }[] = [];
+      const rejected: FileIssue[] = [];
+      const fingerprints = new Set<string>();
+      let duplicates = 0;
+      for (const source of sources) {
+        if (/\.zip$/i.test(source.name)) {
+          const extracted = await extractArchiveWorkbooks(source.name, await source.arrayBuffer());
+          rejected.push(...extracted.rejected);
+          for (const extractedFile of extracted.workbooks) {
+            if (fingerprints.has(extractedFile.fingerprint)) duplicates += 1;
+            else { fingerprints.add(extractedFile.fingerprint); workbooks.push(extractedFile); }
+          }
+          continue;
+        }
+        if (!/\.(xlsx|csv)$/i.test(source.name)) { rejected.push({ fileName: source.name, reason: "Formato no admitido; se aceptan XLSX, CSV y ZIP." }); continue; }
+        if (source.size > defaultRecyclingImportLimits.maxWorkbookBytes) { rejected.push({ fileName: source.name, reason: "El archivo supera el límite de 30 MB por archivo." }); continue; }
+        const bytes = await source.arrayBuffer(), fingerprint = await fingerprintBytes(bytes);
+        if (fingerprints.has(fingerprint)) duplicates += 1;
+        else { fingerprints.add(fingerprint); workbooks.push({ fileName: source.name, bytes, fingerprint }); }
+      }
+      if (workbooks.length > defaultRecyclingImportLimits.maxFiles) {
+        rejected.push({ fileName: "Selección", reason: "Se alcanzó el límite de 500 archivos por operación." });
+      }
+      const X = (await import("xlsx")).default ?? (await import("xlsx"));
+      const loaded: Parsed[] = [];
+      for (const source of workbooks.slice(0, defaultRecyclingImportLimits.maxFiles)) {
+        try {
+          const workbook = X.read(source.bytes, { cellText: true });
+          const sheet = workbook.SheetNames.find((name) => name.toLocaleLowerCase("es-ES") === "datos") ?? workbook.SheetNames[0];
+          if (!sheet || !workbook.Sheets[sheet]) throw new Error("No contiene una hoja legible.");
+          const values = X.utils.sheet_to_json<string[]>(workbook.Sheets[sheet], { header: 1, raw: false, defval: "" });
+          const headers = (values[0] ?? []).map(String);
+          if (!headers.some((value) => value.trim())) throw new Error("No contiene encabezados legibles.");
+          const item = { fileName: source.fileName, importId: importIdFromFingerprint(source.fingerprint), fingerprint: source.fingerprint, sheet, headers, rows: values.slice(1).map((row) => row.map(String)), zipName: source.zipName, internalPath: source.internalPath };
+          if (mobileColumn(item) < 0) throw new Error("No se identificó una columna de móvil confiable.");
+          loaded.push(item);
+        } catch (error) { rejected.push({ fileName: source.internalPath ?? source.fileName, reason: error instanceof Error ? error.message : "Archivo corrupto o no legible." }); }
+      }
+      setParsed(loaded);
+      setIssues(rejected);
+      setDuplicateFiles(duplicates);
+      setSelected(new Set(defaultRecyclableTipifications));
+      if (!loaded.length) setMessage("No hay archivos CRM válidos para registrar.");
+      else if (rejected.length) setMessage("Hay archivos rechazados. Corrígelos o selecciónalos de nuevo antes de una conciliación completa.");
+      else setMessage(`${loaded.length} archivo${loaded.length === 1 ? "" : "s"} preparado${loaded.length === 1 ? "" : "s"}; todavía no se ha realizado ninguna conciliación.`);
     } catch (x) {
       setMessage(x instanceof Error ? x.message : "No se pudo leer el Excel.");
     } finally {
@@ -208,78 +226,57 @@ export function GlobalRecyclingWorkspace({
     }
   }
   async function register() {
-    if (!parsed || mobile < 0) {
-      setMessage(
-        "No se identificó una columna de móvil confiable. Usa Teléfono Movil, nums o Número Emitido.",
-      );
-      return;
-    }
-    setBusy("Registrando archivo canónico…");
+    if (!parsed.length || issues.length) return;
+    setBusy("Registrando archivos canónicos…");
     try {
-      const file = await api<{ id: string }>("/api/reciclaje-global/archivos", {
-        method: "POST",
-        body: JSON.stringify({
-          importacionId: parsed.importId,
-          huellaContenido: parsed.fingerprint,
-          nombreArchivo: parsed.fileName,
-          headers: parsed.headers,
-        }),
-      });
-      for (let i = 0; i < parsed.rows.length; i += 100) {
-        const rows = parsed.rows.slice(i, i + 100).map((cells, o) => {
-          const v =
-              sale >= 0
-                ? (cells[sale] ?? "").trim().toLocaleUpperCase("es-ES")
-                : "",
-            confirmed = [
-              "SI",
-              "SÍ",
-              "TRUE",
-              "CONFIRMADA",
-              "CONFIRMADO",
-            ].includes(v);
-          return {
-            hoja: parsed.sheet,
-            fila: i + o + 2,
-            movil: cells[mobile] ?? "",
-            fechaGestion: date >= 0 ? (cells[date] ?? "") || null : null,
-            tipificacion: tip >= 0 ? (cells[tip] ?? "") || null : null,
-            ventaConfirmada: confirmed,
-            evidenciaVenta: confirmed
-              ? "Venta confirmada indicada por el archivo CRM."
-              : null,
-            cells,
-          };
-        });
-        await api(`/api/reciclaje-global/archivos/${file.id}/filas`, {
-          method: "POST",
-          body: JSON.stringify({ rows }),
-        });
+      const ids: string[] = [];
+      for (const item of parsed) {
+        setFileProgress((current) => ({ ...current, [item.importId]: "REGISTRANDO" }));
+        const file = await api<{ id: string }>("/api/reciclaje-global/archivos", { method: "POST", body: JSON.stringify({ importacionId: item.importId, huellaContenido: item.fingerprint, nombreArchivo: item.fileName, headers: item.headers, procedencia: { zipName: item.zipName ?? null, internalPath: item.internalPath ?? null } }) });
+        const columns = fieldColumns(item);
+        for (let i = 0; i < item.rows.length; i += 100) {
+          const rows = item.rows.slice(i, i + 100).map((cells, offset) => {
+            const value = columns.sale >= 0 ? (cells[columns.sale] ?? "").trim().toLocaleUpperCase("es-ES") : "";
+            const confirmed = ["SI", "SÍ", "TRUE", "CONFIRMADA", "CONFIRMADO"].includes(value);
+            return { hoja: item.sheet, fila: i + offset + 2, movil: cells[columns.mobile] ?? "", fechaGestion: columns.date >= 0 ? (cells[columns.date] ?? "") || null : null, tipificacion: columns.tip >= 0 ? (cells[columns.tip] ?? "") || null : null, ventaConfirmada: confirmed, evidenciaVenta: confirmed ? "Venta confirmada indicada por el archivo CRM." : null, cells };
+          });
+          await api(`/api/reciclaje-global/archivos/${file.id}/filas`, { method: "POST", body: JSON.stringify({ rows }) });
+        }
+        ids.push(file.id);
+        setFileProgress((current) => ({ ...current, [item.importId]: "REGISTRADO" }));
       }
-      setFileId(file.id);
-      setMessage(
-        "Archivo registrado. Aún no se ha evaluado ni generado ninguna base.",
-      );
+      setFileIds(ids);
+      setMessage("Todos los archivos se registraron. Aún no se ha evaluado ni generado ninguna base.");
     } catch (x) {
+      setFileProgress((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, value === "REGISTRANDO" ? "ERROR" : value])));
       setMessage(
-        x instanceof Error ? x.message : "No se pudo registrar el archivo CRM.",
+        x instanceof Error ? x.message : "No se pudieron registrar todos los archivos CRM.",
       );
     } finally {
       setBusy(null);
     }
   }
   async function conciliate() {
-    if (!fileId) return;
-    setBusy("Comparando con las bases originales activas…");
+    if (!fileIds.length || fileIds.length !== parsed.length) return;
+    setBusy("Comparando los archivos con las bases originales activas…");
     try {
-      const r = await api<{ summary: Summary; preview: Preview }>(
-        `/api/reciclaje-global/archivos/${fileId}/conciliar`,
-        { method: "POST" },
-      );
-      setSummary(r.summary);
-      setPreview(r.preview);
+      const results: { summary: Summary; preview: Preview }[] = [];
+      for (const [index, id] of fileIds.entries()) {
+        const item = parsed[index];
+        if (!item) continue;
+        setFileProgress((current) => ({ ...current, [item.importId]: "CONCILIANDO" }));
+        const result = await api<{ summary: Summary; preview: Preview }>(`/api/reciclaje-global/archivos/${id}/conciliar`, { method: "POST" });
+        results.push(result);
+        setFileProgress((current) => ({ ...current, [item.importId]: "CONCILIADO" }));
+      }
+      // Per-file conciliation persists every association. The displayed total
+      // is logical and deduplicated; detailed provenance stays server-side.
+      const unmatched = Math.min(sourceAnalysis.counts.moviles, results.reduce((total, result) => total + result.summary.unmatched, 0));
+      const contradictions = Math.min(sourceAnalysis.counts.moviles, results.reduce((total, result) => total + result.summary.contradictions, 0));
+      setSummary({ logicalMobiles: sourceAnalysis.counts.moviles, unmatched, contradictions });
+      setPreview({ resumen: { filasInvalidas: results.reduce((total, result) => total + result.preview.resumen.filasInvalidas, 0) } });
       setMessage(
-        r.summary.logicalMobiles > r.summary.unmatched
+        sourceAnalysis.counts.moviles > unmatched
           ? "Comprobación completada."
           : "No se encontraron móviles coincidentes en las bases originales activas.",
       );
@@ -292,7 +289,7 @@ export function GlobalRecyclingWorkspace({
     }
   }
   async function prepare() {
-    if (!fileId || !selected.size) {
+    if (!fileIds.length || !selected.size) {
       setMessage(
         "Selecciona al menos una tipificación para incluirla en la evaluación.",
       );
@@ -306,7 +303,7 @@ export function GlobalRecyclingWorkspace({
           method: "POST",
           body: JSON.stringify({
             operationId: crypto.randomUUID(),
-            archivoCrmIds: [fileId],
+            archivoCrmIds: fileIds,
             criteria: {
               effectiveDate: new Date().toISOString().slice(0, 10),
               recyclableTipifications: [...selected],
@@ -426,13 +423,14 @@ export function GlobalRecyclingWorkspace({
         ref={input}
         className="sr-only"
         type="file"
-        accept=".xlsx"
+        accept=".xlsx,.csv,.zip,application/zip,application/x-zip-compressed,text/csv"
+        multiple
         onChange={select}
       />
       <Step
         number={1}
-        title="Cargar archivo CRM"
-        detail="Selecciona el Excel y registra el archivo antes de compararlo."
+        title="Cargar archivos CRM"
+        detail="Selecciona uno o varios XLSX/CSV o un ZIP estándar. Cada archivo se registra de forma canónica antes de compararlo."
       >
         <div className="flex flex-wrap items-center gap-3">
           <button
@@ -441,23 +439,25 @@ export function GlobalRecyclingWorkspace({
             disabled={!!busy}
             className="min-h-10 rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white disabled:bg-slate-300"
           >
-            Seleccionar Excel CRM
+            Seleccionar archivos CRM
           </button>
           <button
             type="button"
             onClick={() => void register()}
-            disabled={!parsed || mobile < 0 || !!busy || !!fileId}
+            disabled={!parsed.length || !!issues.length || !!busy || !!fileIds.length}
             className="min-h-10 rounded-md border border-[#174ea6] px-4 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400"
           >
-            Registrar archivo
+            Registrar archivos
           </button>
-          {parsed ? (
+          {parsed.length ? (
             <span className="text-xs text-slate-600">
-              {parsed.fileName} · {parsed.rows.length} filas · móvil:{" "}
-              {mobile >= 0 ? parsed.headers[mobile] : "no identificado"}
+              {parsed.length} archivos · {parsed.reduce((total, item) => total + item.rows.length, 0)} filas · {sourceAnalysis.counts.moviles} móviles únicos
+              {duplicateFiles ? ` · ${duplicateFiles} archivo${duplicateFiles === 1 ? "" : "s"} repetido${duplicateFiles === 1 ? "" : "s"} omitido${duplicateFiles === 1 ? "" : "s"}` : ""}
             </span>
           ) : null}
         </div>
+        {parsed.length ? <ul className="mt-4 divide-y divide-slate-100 border-y border-slate-200 text-xs text-slate-700">{parsed.map((item) => <li key={item.importId} className="flex flex-wrap items-center justify-between gap-2 py-2"><span>{item.zipName ? `${item.zipName} · ${item.internalPath ?? item.fileName}` : item.fileName} · {item.rows.length} filas</span><b className="text-slate-600">{fileProgress[item.importId] ?? "LISTO"}</b></li>)}</ul> : null}
+        {issues.length ? <ul className="mt-4 space-y-1 border-l-2 border-amber-500 bg-amber-50 p-3 text-xs text-amber-900">{issues.map((issue, index) => <li key={`${issue.fileName}-${index}`}><b>{issue.fileName}:</b> {issue.reason}</li>)}</ul> : null}
       </Step>
       <Step
         number={2}
@@ -468,7 +468,7 @@ export function GlobalRecyclingWorkspace({
         <button
           type="button"
           onClick={() => void conciliate()}
-          disabled={!fileId || !!busy || !!summary}
+          disabled={!fileIds.length || fileIds.length !== parsed.length || !!issues.length || !!busy || !!summary}
           className="min-h-10 rounded-md border border-[#174ea6] px-4 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400"
         >
           Comprobar contra bases activas
@@ -514,7 +514,7 @@ export function GlobalRecyclingWorkspace({
           <button
             type="button"
             onClick={() => void prepare()}
-            disabled={!found || !!busy || !!execution}
+            disabled={!found || !!busy || !!execution || !!issues.length}
             className="min-h-10 rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white disabled:bg-slate-300"
           >
             Preparar evaluación

@@ -27,11 +27,11 @@ function dateOnly(value: string | null): Date | null {
 }
 
 /** Server boundary for the browser-parsed CRM file. The binary never reaches Neon. */
-export async function createCanonicalCrmFile(input: { importacionId: string; huellaContenido: string; nombreArchivo: string; headers: string[] }) {
+export async function createCanonicalCrmFile(input: { importacionId: string; huellaContenido: string; nombreArchivo: string; headers: string[]; procedencia?: { zipName: string | null; internalPath: string | null } | null }) {
   const existing = await prisma.archivoCrmCanonico.findFirst({ where: { OR: [{ importacionId: input.importacionId }, { huellaContenido: input.huellaContenido }] }, select: { id: true, importacionId: true } });
   if (existing) return { id: existing.id, importacionId: existing.importacionId, reused: true };
   try {
-    const file = await prisma.archivoCrmCanonico.create({ data: { importacionId: input.importacionId, huellaContenido: input.huellaContenido, nombreArchivo: input.nombreArchivo, metadatos: { version: 1, headers: input.headers, origin: "CRM" } }, select: { id: true, importacionId: true } });
+    const file = await prisma.archivoCrmCanonico.create({ data: { importacionId: input.importacionId, huellaContenido: input.huellaContenido, nombreArchivo: input.nombreArchivo, metadatos: { version: 2, headers: input.headers, origin: "CRM", source: input.procedencia ?? { zipName: null, internalPath: null } } }, select: { id: true, importacionId: true } });
     return { ...file, reused: false };
   } catch (error) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
