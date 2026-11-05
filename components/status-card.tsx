@@ -15,7 +15,7 @@ const tones = {
 
 export function StatusCard({ hint, label, tone, value }: StatusCardProps) {
   return (
-    <div className="min-w-0 border-l border-slate-200 px-4 py-1 first:border-l-0">
+    <div className="min-w-0 px-4 py-1">
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">{label}</p>
       <p className={`mt-1 text-xl font-semibold tracking-tight tabular-nums ${tones[tone]}`}>{value}</p>
       {hint ? <p className="mt-1 truncate text-[11px] text-slate-500">{hint}</p> : null}

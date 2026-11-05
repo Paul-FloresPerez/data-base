@@ -43,10 +43,10 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
 
   return (
     <section aria-labelledby="distribucion-title" className="space-y-5">
-      <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">Preparación de lotes</p>
-          <h2 id="distribucion-title" className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">Distribuye la base</h2>
+          <h2 id="distribucion-title" className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-[#101b2f] sm:text-4xl">Distribuye la base</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">Define campañas y tamaño de lote antes de generar archivos. Los recuentos responden a los filtros activos de Campañas.</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -55,9 +55,9 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
         </div>
       </div>
 
-      <p className="border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><span className="font-semibold text-slate-900">Base activa:</span> {batch.fileName} · {batch.kind} · <span className="font-mono">{batch.id.slice(0, 8)}</span> · {report.filteredRecords.length} tras filtros.</p>
+      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600"><span className="font-semibold text-slate-900">Base activa:</span> {batch.fileName} · {batch.kind} · <span className="font-mono">{batch.id.slice(0, 8)}</span> · {report.filteredRecords.length} tras filtros.</p>
 
-      <section className="border border-slate-200 bg-white">
+      <section className="rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,27,47,0.04)]">
         <div className="grid gap-5 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">
           <fieldset>
             <legend className="text-sm font-semibold text-slate-900">Campañas a distribuir</legend>
@@ -82,7 +82,7 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
         </div>
       </section>
 
-      <section aria-label="Resumen de distribución" className="overflow-hidden border border-slate-200 bg-white">
+      <section aria-label="Resumen de distribución" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,27,47,0.04)]">
         <div className="grid divide-y divide-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Campañas</p><p className="mt-1 text-xl font-semibold tabular-nums text-slate-900">{plan.campaigns.length}</p></div>
           <div className="px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Elegibles</p><p className="mt-1 text-xl font-semibold tabular-nums text-[#174ea6]">{plan.totalEligible}</p></div>
@@ -100,7 +100,7 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
         ) : null}
       </section>
 
-      <section className="border border-slate-200 bg-slate-50 px-4 py-4">
+      <section className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
         <p className="text-sm font-semibold text-slate-900">Confirmación comercial</p>
         <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">La vista previa no reserva móviles. Confirma solo cuando esta distribución vaya a convertirse en una asignación comercial: el servidor volverá a validar ventas, operador, reservas y el máximo de 100 por lote.</p>
         {commercialDistributionConfirmed ? <p role="status" className="mt-3 text-sm font-semibold text-emerald-800">Distribución comercial confirmada y reservada. La configuración queda bloqueada para conservar su trazabilidad.</p> : <button type="button" disabled={plan.totalEligible === 0 || isConfirmingCommercialDistribution} onClick={onConfirmCommercialDistribution} className="mt-3 inline-flex min-h-10 items-center justify-center rounded-md bg-emerald-700 px-3.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300">{isConfirmingCommercialDistribution ? "Confirmando distribución…" : "Confirmar distribución comercial"}</button>}
