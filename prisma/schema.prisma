@@ -172,17 +172,22 @@ model Registro {
   fechaPortabilidad   DateTime?             @map("fecha_portabilidad") @db.Date
   tipificacion        TipificacionRegistro  @default(PENDIENTE)
   datosOriginales     Json                  @map("datos_originales")
+  archivoProcesamientoId String?            @map("archivo_procesamiento_id") @db.Uuid
+  hojaOrigen          String?               @map("hoja_origen")
+  numeroFilaArchivo   Int?                  @map("numero_fila_archivo")
   creadoEn            DateTime              @default(now()) @map("creado_en")
   base                Base                  @relation(fields: [baseId], references: [id], onDelete: Cascade)
   lotes               LoteRegistro[]
   destinosHlr         ConsultaHlrRegistro[]
   resultadosReciclaje ResultadoEjecucionReciclaje[]
+  archivoProcesamiento ArchivoProcesamiento? @relation(fields: [archivoProcesamientoId], references: [id], onDelete: Restrict)
 
   @@unique([baseId, numeroFilaOriginal])
   @@index([baseId])
   @@index([baseId, movilNormalizado])
   @@index([movilNormalizado])
   @@index([baseId, tipificacion])
+  @@index([archivoProcesamientoId, numeroFilaArchivo])
   @@map("registros")
 }
 
@@ -560,6 +565,7 @@ model ArchivoProcesamiento {
   metadatos         Json
   creadoEn          DateTime               @default(now()) @map("creado_en")
   trabajo           TrabajoProcesamiento   @relation(fields: [trabajoId], references: [id], onDelete: Restrict)
+  registros         Registro[]
 
   @@unique([trabajoId, huellaContenido])
   @@unique([referenciaPrivada])

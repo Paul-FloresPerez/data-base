@@ -59,7 +59,7 @@ export function normalizeColumnName(value: string): string {
     .replace(/[^a-z0-9]/g, "");
 }
 
-function findColumnMapping(headers: string[]): ColumnMapping {
+export function detectColumnMapping(headers: string[]): ColumnMapping {
   const mapping: Partial<Record<InputField, number>> = {};
   const enriched: Partial<Record<EnrichedField, number>> = {};
 
@@ -121,7 +121,7 @@ export function datasetFromWorkbook(
     throw new ExcelImportError("La primera fila debe contener los encabezados de las columnas.");
   }
 
-  const columnMapping = findColumnMapping(headers);
+  const columnMapping = detectColumnMapping(headers);
 
   return {
     fileName,

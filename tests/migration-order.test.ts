@@ -20,6 +20,7 @@ const expected = [
   "20261104110000_add_global_recycling_execution",
   "20261104120000_add_global_recycled_base_generation",
   "20261105090000_add_base_logical_archive",
+  "20261105100000_add_incremental_import_provenance",
 ];
 
 test("las migraciones preparadas tienen un orden estable y son aditivas", async () => {
@@ -69,4 +70,7 @@ test("las migraciones preparadas tienen un orden estable y son aditivas", async 
   assert.match(sql[13]!, /ADD COLUMN "archivada_en"/);
   assert.match(sql[13]!, /BASE_ARCHIVADA/);
   assert.doesNotMatch(sql[13]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
+  assert.match(sql[14]!, /ADD COLUMN "archivo_procesamiento_id" UUID/);
+  assert.match(sql[14]!, /numero_fila_archivo/);
+  assert.doesNotMatch(sql[14]!, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
 });
