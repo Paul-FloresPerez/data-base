@@ -69,10 +69,10 @@ function ModuleHeading({
   headingId?: string;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#174ea6]">{eyebrow}</p>
-        <h2 id={headingId} className="mt-1 text-2xl font-semibold tracking-tight text-[#0f274f] sm:text-3xl">{title}</h2>
+        <h2 id={headingId} className="mt-1 text-3xl font-semibold tracking-[-0.025em] text-[#101b2f] sm:text-4xl">{title}</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{description}</p>
       </div>
       {action}
@@ -90,7 +90,7 @@ function EmptyModuleState({
   action: ReactNode;
 }) {
   return (
-    <section className="border border-dashed border-slate-300 bg-white px-5 py-12 text-center sm:px-8">
+    <section className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center shadow-[0_1px_2px_rgba(16,27,47,0.04)] sm:px-8">
       <p className="text-sm font-semibold text-slate-900">{title}</p>
       <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-600">{description}</p>
       <div className="mt-5">{action}</div>
@@ -102,7 +102,7 @@ function PrimaryButton({ children, className = "", ...props }: ButtonHTMLAttribu
   return (
     <button
       {...props}
-      className={`inline-flex min-h-10 items-center justify-center rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#123f87] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:bg-slate-300 ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center rounded-md bg-[#2457a7] px-4 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(16,27,47,0.12)] hover:bg-[#1d4a91] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2457a7] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none ${className}`}
     >
       {children}
     </button>
@@ -113,7 +113,7 @@ function SecondaryButton({ children, className = "", ...props }: ButtonHTMLAttri
   return (
     <button
       {...props}
-      className={`inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#174ea6] disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+      className={`inline-flex min-h-10 items-center justify-center rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2457a7] disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
     >
       {children}
     </button>
