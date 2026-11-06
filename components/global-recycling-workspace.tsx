@@ -31,6 +31,7 @@ type Parsed = {
 };
 type Summary = {
   logicalMobiles: number;
+  found: number;
   unmatched: number;
   contradictions: number;
 };
@@ -264,6 +265,10 @@ export function GlobalRecyclingWorkspace({
   async function conciliate() {
     if (!fileIds.length || fileIds.length !== parsed.length) return;
     setBusy("Comparando los archivos con las bases originales activas…");
+    setSummary(null);
+    setPreview(null);
+    setExecution(null);
+    setReasons([]);
     try {
       const results: { summary: Summary; preview: Preview }[] = [];
       for (const [index, id] of fileIds.entries()) {
@@ -276,12 +281,13 @@ export function GlobalRecyclingWorkspace({
       }
       // Per-file conciliation persists every association. The displayed total
       // is logical and deduplicated; detailed provenance stays server-side.
+      const singleSource = results.length === 1 ? results[0]?.summary : null;
       const unmatched = Math.min(sourceAnalysis.counts.moviles, results.reduce((total, result) => total + result.summary.unmatched, 0));
       const contradictions = Math.min(sourceAnalysis.counts.moviles, results.reduce((total, result) => total + result.summary.contradictions, 0));
-      setSummary({ logicalMobiles: sourceAnalysis.counts.moviles, unmatched, contradictions });
+      setSummary(singleSource ?? { logicalMobiles: sourceAnalysis.counts.moviles, found: sourceAnalysis.counts.moviles - unmatched, unmatched, contradictions });
       setPreview({ resumen: { filasInvalidas: results.reduce((total, result) => total + result.preview.resumen.filasInvalidas, 0) } });
       setMessage(
-        sourceAnalysis.counts.moviles > unmatched
+        (singleSource?.found ?? sourceAnalysis.counts.moviles - unmatched) > 0
           ? "Comprobación completada."
           : "No se encontraron móviles coincidentes en las bases originales activas.",
       );
@@ -403,7 +409,7 @@ export function GlobalRecyclingWorkspace({
     summary && preview
       ? [
           ["Móviles", summary.logicalMobiles],
-          ["Encontrados", found],
+          ["Encontrados", summary.found],
           ["No encontrados", summary.unmatched],
           ["Contradicciones", summary.contradictions],
           ["Inválidos", preview.resumen.filasInvalidas],

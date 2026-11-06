@@ -262,7 +262,7 @@ export async function conciliateCanonicalCrmFile(input: { archivoCrmId: string; 
       });
     }
   });
-  return { pages, logicalMobiles, unmatched, contradictions, associatedBases: perBase.size };
+  return { pages, logicalMobiles, found: logicalMobiles - unmatched, unmatched, contradictions, associatedBases: perBase.size };
 }
 
 /** Read-only compatibility resolver; RG-2 never copies or changes unlinked legacy files. */
