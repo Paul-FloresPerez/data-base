@@ -479,10 +479,10 @@ export function GlobalRecyclingWorkspace({
         <button
           type="button"
           onClick={() => void conciliate()}
-          disabled={!fileIds.length || fileIds.length !== parsed.length || !!issues.length || !!busy || !!summary}
+          disabled={!fileIds.length || fileIds.length !== parsed.length || !!issues.length || !!busy}
           className="min-h-10 rounded-md border border-[#174ea6] px-4 text-sm font-semibold text-[#174ea6] disabled:border-slate-200 disabled:text-slate-400"
         >
-          Comprobar contra bases activas
+          {summary ? "Actualizar coincidencias" : "Comprobar contra bases activas"}
         </button>
         {metrics.length ? (
           <dl className="mt-4 grid grid-cols-2 divide-x divide-y divide-slate-200 border border-slate-200 sm:grid-cols-5">

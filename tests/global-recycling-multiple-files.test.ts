@@ -43,6 +43,11 @@ test("RG-6 registra todas las fuentes, bloquea conciliación parcial y reutiliza
   assert.match(workspace, /const singleSource = results\.length === 1/);
   assert.match(workspace, /setSummary\(singleSource/);
   assert.match(workspace, /!!issues\.length/);
+  assert.match(workspace, /Actualizar coincidencias/);
+  assert.match(
+    workspace,
+    /disabled=\{!fileIds\.length \|\| fileIds\.length !== parsed\.length \|\| !!issues\.length \|\| !!busy\}/,
+  );
   assert.match(workspace, /\.csv/);
   assert.match(workspace, /No se pudo registrar \$\{registering\.fileName\}/);
   assert.match(fileRoute, /parseCanonicalCrmFileRequest/);
