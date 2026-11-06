@@ -4,11 +4,11 @@ import { getSozarMobileFingerprintKeyFromEnvironment } from "./sozar-control-pla
 import { getSozarResponseEncryptionKeyFromEnvironment } from "./sozar-response-inspection.ts";
 
 /**
- * A separate reviewed release gate for the one-off production probe. It must
- * opens only the reviewed, one-shot administrative route. Environment values
- * cannot open it, and it never enables the shared/bulk HLR provider.
+ * A separate reviewed release gate for the one-off production probe. It opens
+ * only the reviewed, one-shot administrative route. Environment values cannot
+ * open it, and it never enables the shared/bulk HLR provider.
  */
-export const SOZAR_FIRST_REAL_TEST_CODE_GATE = false;
+export const SOZAR_FIRST_REAL_TEST_CODE_GATE = true;
 
 export const SOZAR_FIRST_REAL_TEST_OPERATION_KEY = "sozar:first-real-test:v1";
 

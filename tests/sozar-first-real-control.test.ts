@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SOZAR_EXECUTION_CODE_GATE } from "../lib/server/sozar-http-client.ts";
+import { createServerSozarFetchTransport, createServerSozarFirstRealTestFetchTransport, SOZAR_EXECUTION_CODE_GATE, SozarExecutionBlockedError, SozarHttpClient } from "../lib/server/sozar-http-client.ts";
 import { isSozarHlrExecutionEnabled } from "../lib/server/sozar-hlr-provider.ts";
 import { getFirstRealSozarTestConfiguration, SOZAR_FIRST_REAL_TEST_CODE_GATE, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "../lib/server/sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "../lib/server/sozar-first-real-plan.ts";
@@ -15,10 +15,33 @@ const input = {
   existingConsultationState: null,
 };
 
-test("la prueba única y las vías compartidas siguen cerradas", () => {
-  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, false);
+test("la prueba única queda habilitada sin abrir las vías compartidas", () => {
+  assert.equal(SOZAR_FIRST_REAL_TEST_CODE_GATE, true);
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
+});
+
+test("el transporte dedicado permite una sola simulación y el transporte compartido sigue bloqueado", async () => {
+  const fetchBefore = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    calls += 1;
+    assert.equal(init?.method, "GET");
+    return new Response(JSON.stringify({ provider: "simulated" }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const client = new SozarHttpClient({
+      endpointTemplate: "https://apisozarusac.com/BackendJava/api/numbers/{numero}",
+      allowedHosts: ["apisozarusac.com"],
+      timeoutMs: 1_000,
+      authentication: { kind: "none" },
+    }, createServerSozarFirstRealTestFetchTransport(), "first-real-test");
+    assert.deepEqual(await client.lookupRaw("612345678"), { provider: "simulated" });
+    assert.equal(calls, 1);
+    assert.throws(() => createServerSozarFetchTransport(), SozarExecutionBlockedError);
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
 });
 
 test("el plan controla exactamente un móvil y una clave global persistente", () => {
@@ -63,9 +86,12 @@ test("un límite global, caché real o estado incierto bloquean cualquier segund
 test("la vía excepcional queda limitada al ejecutor de prueba y la vía masiva continúa cerrada", async () => {
   const client = await readFile(new URL("../lib/server/sozar-http-client.ts", import.meta.url), "utf8");
   const executor = await readFile(new URL("../lib/server/sozar-first-real-executor.ts", import.meta.url), "utf8");
+  const workspace = await readFile(new URL("../components/excel-workspace.tsx", import.meta.url), "utf8");
   assert.match(client, /firstRealTestTransportBrand/);
   assert.match(client, /executionScope === "first-real-test"/);
   assert.match(executor, /"first-real-test"/);
+  assert.match(workspace, /const firstRealSozarTestUiEnabled = true/);
+  assert.match(workspace, /Quedó bloqueada como INCIERTA y no se repetirá automáticamente/);
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
 });

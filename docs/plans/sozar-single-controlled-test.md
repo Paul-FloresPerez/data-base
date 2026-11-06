@@ -39,6 +39,8 @@ ningún cambio de entorno puede producir tráfico al proveedor.
 - Vincular por móvil normalizado, nunca por fila; el aplicador preserva todas
   las demás celdas y el orden original.
 
-La primera ejecución real requiere un cambio de código revisado que abra ambas
-puertas, un despliegue independiente y autorización expresa. Esta rama no
-contiene ese cambio.
+La primera ejecución real requiere un cambio de código revisado que abra
+solamente `SOZAR_FIRST_REAL_TEST_CODE_GATE`, un despliegue independiente y
+autorización expresa. `SOZAR_EXECUTION_CODE_GATE` e
+`isSozarHlrExecutionEnabled` deben permanecer en `false`; esta excepción no
+habilita el proveedor compartido ni procesamiento masivo.

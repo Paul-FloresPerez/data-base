@@ -53,7 +53,7 @@ function maskMobile(mobile: string): string {
 }
 
 /** UI visibility only; server authorization, reservation and transport gates remain authoritative. */
-const firstRealSozarTestUiEnabled = false;
+const firstRealSozarTestUiEnabled = true;
 
 function ModuleHeading({
   eyebrow,
@@ -573,7 +573,11 @@ export function ExcelWorkspace() {
     try {
       const response = await fetch("/api/sozar/first-real", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ baseId: batch.id, sourceRow: record.sourceRow, confirmation: "SOZAR_SINGLE_REAL_REQUEST" }) });
       const payload = await response.json() as { status?: string; error?: string };
-      setSingleHlrTestStatus(payload.status ?? payload.error ?? "No se pudo iniciar la prueba.");
+      if (payload.status === "INCIERTA") {
+        setSingleHlrTestStatus("La solicitud no obtuvo una respuesta verificable. Quedó bloqueada como INCIERTA y no se repetirá automáticamente.");
+      } else {
+        setSingleHlrTestStatus(payload.status ?? payload.error ?? "No se pudo iniciar la prueba.");
+      }
     } catch {
       setSingleHlrTestStatus("No se pudo contactar con el servidor de la prueba.");
     } finally {
@@ -785,7 +789,7 @@ export function ExcelWorkspace() {
                   <p className="mt-1 text-xs leading-5 text-slate-600">Requiere que la selección anterior contenga exactamente un móvil y una confirmación explícita. El permiso excepcional no se puede reutilizar para la selección completa.</p>
                   <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-700"><input type="checkbox" checked={isSingleHlrTestConfirmed} disabled={!hasPreparedSingleHlrSelection} onChange={(event) => setIsSingleHlrTestConfirmed(event.target.checked)} className="mt-0.5" />Confirmo que autorizo una única consulta potencialmente facturable, sin reintentos automáticos.</label>
                   <PrimaryButton type="button" disabled={!firstRealSozarTestUiEnabled || !isSingleHlrTestReady || !hasPreparedSingleHlrSelection || !isSingleHlrTestConfirmed || isExecutingSingleHlrTest} onClick={() => void executeSingleRealHlrTest()} className="mt-3 w-full">{isExecutingSingleHlrTest ? "Enviando solicitud…" : "Ejecutar única consulta real"}</PrimaryButton>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">La ejecución está bloqueada por código. Preparar Uno o Todos nunca abre las puertas de Sozar ni realiza una solicitud.</p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">Solo este control administrativo puede usar la puerta dedicada. Preparar Uno o Todos no abre las vías compartidas ni permite consultas masivas.</p>
                   {singleHlrTestStatus ? <p aria-live="polite" className="mt-2 text-xs leading-5 text-slate-700">Estado: {singleHlrTestStatus}</p> : null}
                 </div>
               </section>
