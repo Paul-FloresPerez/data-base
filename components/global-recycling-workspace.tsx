@@ -228,9 +228,11 @@ export function GlobalRecyclingWorkspace({
   async function register() {
     if (!parsed.length || issues.length) return;
     setBusy("Registrando archivos canónicos…");
+    let registering: Parsed | null = null;
     try {
       const ids: string[] = [];
       for (const item of parsed) {
+        registering = item;
         setFileProgress((current) => ({ ...current, [item.importId]: "REGISTRANDO" }));
         const file = await api<{ id: string }>("/api/reciclaje-global/archivos", { method: "POST", body: JSON.stringify({ importacionId: item.importId, huellaContenido: item.fingerprint, nombreArchivo: item.fileName, headers: item.headers, procedencia: { zipName: item.zipName ?? null, internalPath: item.internalPath ?? null } }) });
         const columns = fieldColumns(item);
@@ -249,8 +251,11 @@ export function GlobalRecyclingWorkspace({
       setMessage("Todos los archivos se registraron. Aún no se ha evaluado ni generado ninguna base.");
     } catch (x) {
       setFileProgress((current) => Object.fromEntries(Object.entries(current).map(([key, value]) => [key, value === "REGISTRANDO" ? "ERROR" : value])));
+      const detail = x instanceof Error ? x.message : "No se pudo completar el registro.";
       setMessage(
-        x instanceof Error ? x.message : "No se pudieron registrar todos los archivos CRM.",
+        registering
+          ? `No se pudo registrar ${registering.fileName}: ${detail}`
+          : detail,
       );
     } finally {
       setBusy(null);

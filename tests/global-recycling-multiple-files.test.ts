@@ -3,6 +3,21 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { analyzeRecyclingFiles } from "../lib/recycling/recycling.ts";
+import { parseCanonicalCrmFileRequest } from "../lib/recycling/canonical-crm-request.ts";
+
+const canonicalRequest = (procedencia: unknown) => ({
+  importacionId: "aaaaaaaa-aaaa-5aaa-8aaa-aaaaaaaaaaaa",
+  huellaContenido: "a".repeat(64),
+  nombreArchivo: "crm.xlsx",
+  headers: ["Telefono Movil", "Tipificacion"],
+  procedencia,
+});
+
+test("acepta procedencia nula de un XLSX directo y conserva la de ZIP", () => {
+  assert.deepEqual(parseCanonicalCrmFileRequest(canonicalRequest({ zipName: null, internalPath: null }))?.procedencia, { zipName: null, internalPath: null });
+  assert.deepEqual(parseCanonicalCrmFileRequest(canonicalRequest({ zipName: "lote.zip", internalPath: "octubre/crm.xlsx" }))?.procedencia, { zipName: "lote.zip", internalPath: "octubre/crm.xlsx" });
+  assert.equal(parseCanonicalCrmFileRequest(canonicalRequest({ zipName: 3, internalPath: null })), null);
+});
 
 test("la consolidación local conserva tres procedencias de un mismo móvil", () => {
   const analysis = analyzeRecyclingFiles([
@@ -27,6 +42,7 @@ test("RG-6 registra todas las fuentes, bloquea conciliación parcial y reutiliza
   assert.match(workspace, /archivoCrmIds:\s*fileIds/);
   assert.match(workspace, /!!issues\.length/);
   assert.match(workspace, /\.csv/);
-  assert.match(fileRoute, /procedencia/);
+  assert.match(workspace, /No se pudo registrar \$\{registering\.fileName\}/);
+  assert.match(fileRoute, /parseCanonicalCrmFileRequest/);
   assert.match(storage, /source: input\.procedencia/);
 });
