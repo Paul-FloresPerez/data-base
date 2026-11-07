@@ -4,6 +4,7 @@ import { createServerSozarFetchTransport, createServerSozarFirstRealTestFetchTra
 import { isSozarHlrExecutionEnabled } from "../lib/server/sozar-hlr-provider.ts";
 import { getFirstRealSozarTestConfiguration, SOZAR_FIRST_REAL_TEST_CODE_GATE, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "../lib/server/sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "../lib/server/sozar-first-real-plan.ts";
+import { getFirstRealSozarUiReadiness } from "../lib/services/sozar-first-real-ui-readiness.ts";
 import { readFile } from "node:fs/promises";
 
 const input = {
@@ -58,6 +59,41 @@ test("la prueba única no exige ni inventa una tarifa para reservar un único m�
   assert.equal(planFirstRealSozarTest(input).status, "LISTO");
 });
 
+test("la interfaz explica el guardado pendiente y solo habilita la prueba con preflight persistente", () => {
+  const base = {
+    uiGateEnabled: true,
+    isInEnrichment: true,
+    hasPreview: true,
+    serverReady: true,
+    serverIssue: null,
+    globalStatus: "SIN_PRUEBA_REAL",
+    hasPreparedSingleSelection: true,
+    hasExplicitConfirmation: true,
+    isExecuting: false,
+  } as const;
+  assert.match(getFirstRealSozarUiReadiness({ ...base, saveState: "saving" }).reason ?? "", /se está guardando/i);
+  assert.match(getFirstRealSozarUiReadiness({ ...base, saveState: "error" }).reason ?? "", /Guarda la base ORIGINAL/i);
+  assert.deepEqual(getFirstRealSozarUiReadiness({ ...base, saveState: "saved" }), { canExecute: true, reason: null });
+});
+
+test("la interfaz conserva bloqueos de selección, API real y reserva global", () => {
+  const base = {
+    uiGateEnabled: true,
+    isInEnrichment: true,
+    hasPreview: true,
+    saveState: "saved" as const,
+    serverReady: true,
+    serverIssue: null,
+    globalStatus: "SIN_PRUEBA_REAL",
+    hasPreparedSingleSelection: true,
+    hasExplicitConfirmation: true,
+    isExecuting: false,
+  };
+  assert.match(getFirstRealSozarUiReadiness({ ...base, hasPreparedSingleSelection: false }).reason ?? "", /exactamente un móvil/i);
+  assert.match(getFirstRealSozarUiReadiness({ ...base, globalStatus: "INCIERTA" }).reason ?? "", /INCIERTA/);
+  assert.match(getFirstRealSozarUiReadiness({ ...base, serverIssue: "El móvil seleccionado ya tiene enriquecimiento API_REAL." }).reason ?? "", /API_REAL/);
+});
+
 test("las claves de la prueba única requieren 32 bytes en base64url antes de reservar", () => {
   const fingerprintBefore = process.env.SOZAR_MOBILE_FINGERPRINT_KEY;
   const responseBefore = process.env.SOZAR_RESPONSE_ENCRYPTION_KEY;
@@ -91,6 +127,7 @@ test("la vía excepcional queda limitada al ejecutor de prueba y la vía masiva 
   assert.match(client, /executionScope === "first-real-test"/);
   assert.match(executor, /"first-real-test"/);
   assert.match(workspace, /const firstRealSozarTestUiEnabled = true/);
+  assert.match(workspace, /getFirstRealSozarUiReadiness/);
   assert.match(workspace, /Quedó bloqueada como INCIERTA y no se repetirá automáticamente/);
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
