@@ -5,11 +5,17 @@ import type { WorkingBatch } from "../workspace/batch.ts";
 
 /**
  * A restored completed base establishes this signature as its autosave
- * baseline. Changes made after it is opened naturally produce a new signature
- * and are still persisted through the normal revisioned workflow.
+ * baseline. The blocked HLR queue is administrative browser state: it is not
+ * an authorization and the server preflight does not depend on it. Excluding
+ * it prevents selecting a single Sozar test candidate from rewriting an
+ * otherwise complete original base in record chunks.
+ *
+ * Explicit base saves still serialize `realHlrQueue` for backwards-compatible
+ * audit recovery; ordinary data changes continue to produce a new signature.
  */
 export function batchSaveSignature(batch: WorkingBatch): string {
-  return JSON.stringify(batch);
+  const { realHlrQueue: _blockedAdministrativeQueue, ...autosaveFields } = batch;
+  return JSON.stringify(autosaveFields);
 }
 
 export function needsBatchSave(lastSavedSignature: string | null, batchSignature: string): boolean {

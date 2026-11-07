@@ -6,6 +6,7 @@ import { batchSaveSignature, needsBatchSave } from "../lib/persistence/client-ba
 import { cleanDataset } from "../lib/excel/cleaning.ts";
 import { createWorkingBatch, getProcessingModule } from "../lib/workspace/batch.ts";
 import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
+import { prepareDisabledRealHlrQueue } from "../lib/services/real-hlr-queue-plan.ts";
 
 const dataset = { fileName: "clientes.xlsx", columns: ["Móvil", "CP", "Nombre"], columnMapping: { movil: 0, nombre: 2, enriched: {} }, records: [
   { sourceRow: 2, cells: ["612345678", "01234", "Ana"], mobile: "612345678", document: "", name: "Ana", contactPhone: "" },
@@ -33,6 +34,22 @@ test("una base restaurada y completa establece un baseline y no dispara un autog
   assert.equal(needsBatchSave(baseline, batchSaveSignature(restored)), false);
   restored.displayName = "Base persistida corregida";
   assert.equal(needsBatchSave(baseline, batchSaveSignature(restored)), true);
+});
+
+test("preparar una cola Sozar bloqueada no reescribe una base ORIGINAL ya guardada", () => {
+  const batch = createWorkingBatch(dataset, "11111111-1111-4111-8111-111111111120", "2026-11-07T00:00:00.000Z");
+  batch.cleaning = cleanDataset(dataset);
+  const baseline = batchSaveSignature(batch);
+  batch.realHlrQueue = prepareDisabledRealHlrQueue({
+    baseId: batch.id,
+    records: [batch.cleaning.validRecords[0]!],
+    maxQueries: 1,
+    budgetLimit: 0,
+    preparedAt: "2026-11-07T00:00:00.000Z",
+  });
+  assert.equal(needsBatchSave(baseline, batchSaveSignature(batch)), false);
+  batch.displayName = "Cambio operativo real";
+  assert.equal(needsBatchSave(baseline, batchSaveSignature(batch)), true);
 });
 
 test("restaura el nombre elegido y el estado de exportación guardado", () => {

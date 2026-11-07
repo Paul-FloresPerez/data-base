@@ -10,6 +10,7 @@ import { buildExportPlan, MAX_BATCH_SIZE } from "../lib/export/xlsx-export.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
 import { batchSaveSignature, needsBatchSave } from "../lib/persistence/client-base-save.ts";
 import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
+import { prepareDisabledRealHlrQueue } from "../lib/services/real-hlr-queue-plan.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
 
 function crmDataset(recordCount: number) {
@@ -83,6 +84,16 @@ test("procesa, conserva y distribuye bases CRM sintéticas de 100, 1.000 y 10.00
     assert.equal(restored.provenanceBySourceRow[2], "MOCK");
     const restoredBaseline = batchSaveSignature(restored);
     assert.equal(needsBatchSave(restoredBaseline, batchSaveSignature(restored)), false);
+    if (recordCount === 10_000) {
+      restored.realHlrQueue = prepareDisabledRealHlrQueue({
+        baseId: restored.id,
+        records: restored.cleaning!.validRecords.slice(0, 1),
+        maxQueries: 1,
+        budgetLimit: 0,
+        preparedAt: "2026-10-27T00:00:00.000Z",
+      });
+      assert.equal(needsBatchSave(restoredBaseline, batchSaveSignature(restored)), false);
+    }
   }
 });
 
