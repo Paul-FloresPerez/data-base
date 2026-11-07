@@ -45,6 +45,28 @@ test("el transporte dedicado permite una sola simulación y el transporte compar
   }
 });
 
+test("errores de transporte, timeout y JSON inválido no habilitan reintentos automáticos", async () => {
+  const fetchBefore = globalThis.fetch;
+  const client = () => new SozarHttpClient({
+    endpointTemplate: "https://apisozarusac.com/BackendJava/api/numbers/{numero}",
+    allowedHosts: ["apisozarusac.com"],
+    timeoutMs: 1_000,
+    authentication: { kind: "none" },
+  }, createServerSozarFirstRealTestFetchTransport(), "first-real-test");
+  try {
+    for (const response of [
+      async () => { throw new Error("transport fixture"); },
+      async () => { const error = new Error("timeout fixture"); error.name = "AbortError"; throw error; },
+      async () => new Response("not json", { status: 200, headers: { "content-type": "application/json" } }),
+    ]) {
+      globalThis.fetch = response as typeof fetch;
+      await assert.rejects(client().lookupRaw("612345678"));
+    }
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+});
+
 test("el plan controla exactamente un móvil y una clave global persistente", () => {
   const plan = planFirstRealSozarTest(input);
   assert.equal(plan.status, "LISTO");
@@ -126,6 +148,8 @@ test("la vía excepcional queda limitada al ejecutor de prueba y la vía masiva 
   assert.match(client, /firstRealTestTransportBrand/);
   assert.match(client, /executionScope === "first-real-test"/);
   assert.match(executor, /"first-real-test"/);
+  assert.match(executor, /estado: "INCIERTA",\s*tokenReserva: null,\s*reservadaEn: null,\s*reservaExpiraEn: null/);
+  assert.match(executor, /markFirstRealSozarConsultationUncertain\(reserved\.id\)/);
   assert.match(workspace, /const firstRealSozarTestUiEnabled = true/);
   assert.match(workspace, /getFirstRealSozarUiReadiness/);
   assert.match(workspace, /Quedó bloqueada como INCIERTA y no se repetirá automáticamente/);

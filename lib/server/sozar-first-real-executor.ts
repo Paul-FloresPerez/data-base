@@ -10,6 +10,23 @@ import { planFirstRealSozarTest } from "./sozar-first-real-plan.ts";
 import { describeSozarResponseShape, encryptSozarResponseForInspection } from "./sozar-response-inspection.ts";
 import { getFirstRealSozarEligibleRecord } from "./sozar-first-real-selection.ts";
 
+/**
+ * A result with unknown provider outcome must remain terminally blocked, but
+ * cannot retain an active queue reservation. The operation event remains the
+ * durable global latch and the consultation keeps its audit timestamps.
+ */
+export async function markFirstRealSozarConsultationUncertain(consultationId: string) {
+  return prisma.consultaHlr.update({
+    where: { id: consultationId },
+    data: {
+      estado: "INCIERTA",
+      tokenReserva: null,
+      reservadaEn: null,
+      reservaExpiraEn: null,
+    },
+  });
+}
+
 export async function executeFirstRealSozarTest(input: { baseId: string; sourceRow: number; userId: string }) {
   assertFirstRealSozarTestEnabled();
   const configuration = getFirstRealSozarTestConfiguration();
@@ -46,7 +63,7 @@ export async function executeFirstRealSozarTest(input: { baseId: string; sourceR
     await prisma.consultaHlr.update({ where: { id: reserved.id }, data: { estado: "EXITOSA", resultadoId: result.id } });
     return { status: "RESPUESTA_CIFRADA_PENDIENTE_DE_CONTRATO" } as const;
   } catch {
-    await prisma.consultaHlr.update({ where: { id: reserved.id }, data: { estado: "INCIERTA" } });
+    await markFirstRealSozarConsultationUncertain(reserved.id);
     return { status: "INCIERTA" } as const;
   }
 }
