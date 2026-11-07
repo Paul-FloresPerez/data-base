@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { getRealHlrPreview } from "../lib/services/real-hlr-preview.ts";
+import { getFirstRealSozarTestCandidates, getRealHlrPreview } from "../lib/services/real-hlr-preview.ts";
 import { prepareDisabledRealHlrQueue } from "../lib/services/real-hlr-queue-plan.ts";
 import { TestHlrProvider } from "../lib/services/test-hlr-provider.ts";
 import { RealHlrProviderDisabledError, SozarHlrProvider, isSozarHlrExecutionEnabled, mapDocumentedSozarResponse } from "../lib/server/sozar-hlr-provider.ts";
@@ -130,6 +130,11 @@ test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () 
 test("la previsualización separa datos reales, existentes y pendientes", () => {
   const preview = getRealHlrPreview(cleaning, dataset, { 2: "EXCEL", 3: "API_REAL" });
   assert.deepEqual(preview, { validRecords: 2, uniqueMobiles: 2, fixedExcluded: 0, invalidExcluded: 0, duplicateExcluded: 0, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
+});
+
+test("la prueba única puede seleccionar un móvil MOCK, pero no uno ya API_REAL", () => {
+  const candidates = getFirstRealSozarTestCandidates(cleaning, { 2: "MOCK", 3: "API_REAL" });
+  assert.deepEqual(candidates.map((record) => record.normalizedMobile), ["612345678"]);
 });
 
 test("la cola bloqueada es idempotente y se identifica por móvil normalizado", () => {

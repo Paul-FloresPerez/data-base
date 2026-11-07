@@ -84,3 +84,17 @@ export function getPendingRealHlrRecords(
     provenanceBySourceRow[record.sourceRow] !== "API_REAL" && !hasExistingOperators(record, dataset, existingOutput),
   );
 }
+
+/**
+ * The exceptional first-real route is intentionally different from the future
+ * bulk queue: a previous MOCK value must not make an authorized contact
+ * impossible to verify with the provider. A genuine API result remains final.
+ */
+export function getFirstRealSozarTestCandidates(
+  cleaning: CleaningResult,
+  provenanceBySourceRow: Record<number, RecordProvenance>,
+) {
+  return cleaning.validRecords.filter((record) =>
+    provenanceBySourceRow[record.sourceRow] !== "API_REAL",
+  );
+}

@@ -8,12 +8,12 @@ import { getSozarHttpConfigurationFromEnvironment, createServerSozarFirstRealTes
 import { assertFirstRealSozarTestEnabled, getFirstRealSozarTestConfiguration, SOZAR_FIRST_REAL_TEST_OPERATION_KEY } from "./sozar-first-real-gate.ts";
 import { planFirstRealSozarTest } from "./sozar-first-real-plan.ts";
 import { describeSozarResponseShape, encryptSozarResponseForInspection } from "./sozar-response-inspection.ts";
+import { getFirstRealSozarEligibleRecord } from "./sozar-first-real-selection.ts";
 
 export async function executeFirstRealSozarTest(input: { baseId: string; sourceRow: number; userId: string }) {
   assertFirstRealSozarTestEnabled();
   const configuration = getFirstRealSozarTestConfiguration();
-  const record = await prisma.registro.findFirst({ where: { baseId: input.baseId, numeroFilaOriginal: input.sourceRow }, select: { id: true, movilNormalizado: true } });
-  if (!record?.movilNormalizado) throw new Error("El registro seleccionado no contiene un móvil válido.");
+  const record = await getFirstRealSozarEligibleRecord(input.baseId, input.sourceRow);
   const fingerprint = fingerprintHlrMobile(record.movilNormalizado, configuration.mobileFingerprintKey);
   const [globalEvent, reusable, existing] = await Promise.all([
     prisma.eventoConsultaHlr.findUnique({ where: { claveOperacion: SOZAR_FIRST_REAL_TEST_OPERATION_KEY }, select: { id: true } }),

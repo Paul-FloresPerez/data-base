@@ -95,3 +95,12 @@ test("la vía excepcional queda limitada al ejecutor de prueba y la vía masiva 
   assert.equal(SOZAR_EXECUTION_CODE_GATE, false);
   assert.equal(isSozarHlrExecutionEnabled, false);
 });
+
+test("la selección excepcional exige una ORIGINAL completa y no reutiliza API_REAL", async () => {
+  const executor = await readFile(new URL("../lib/server/sozar-first-real-executor.ts", import.meta.url), "utf8");
+  const selection = await readFile(new URL("../lib/server/sozar-first-real-selection.ts", import.meta.url), "utf8");
+  assert.match(executor, /getFirstRealSozarEligibleRecord/);
+  assert.match(selection, /base\.tipo !== "ORIGINAL"/);
+  assert.match(selection, /recordProvenance === "API_REAL"/);
+  assert.match(selection, /asociaciones: \{ some: \{ baseOriginalId: baseId \} \}/);
+});

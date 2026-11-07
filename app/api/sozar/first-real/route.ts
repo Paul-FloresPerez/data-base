@@ -1,6 +1,7 @@
 import { requireAdminApi } from "@/lib/server/require-admin";
 import { assertFirstRealSozarTestEnabled, getFirstRealSozarTestConfiguration, SozarFirstRealTestBlockedError } from "@/lib/server/sozar-first-real-gate";
 import { executeFirstRealSozarTest } from "@/lib/server/sozar-first-real-executor";
+import { getFirstRealSozarCandidateHints, getFirstRealSozarSelectionContext } from "@/lib/server/sozar-first-real-selection";
 import { prisma } from "@/lib/server/prisma";
 
 /**
@@ -25,7 +26,7 @@ export async function POST(request: Request) {
 }
 
 /** Administrators may review only the encrypted response schema, never JSON values. */
-export async function GET() {
+export async function GET(request: Request) {
   if (!await requireAdminApi()) return Response.json({ error: "No autorizado" }, { status: 401 });
   // This validates only the local server configuration. It does not create a
   // reservation, invoke a transport or contact the provider.
@@ -41,7 +42,22 @@ export async function GET() {
     where: { claveOperacion: "sozar:first-real-test:v1" },
     select: { consulta: { select: { estado: true, resultado: { select: { resultado: true, consultadoEn: true } } } } },
   });
-  if (!event?.consulta) return Response.json({ status: "SIN_PRUEBA_REAL", configurationReady });
+  const url = new URL(request.url);
+  const baseId = url.searchParams.get("baseId");
+  const sourceRowRaw = url.searchParams.get("sourceRow");
+  let candidates: Awaited<ReturnType<typeof getFirstRealSozarCandidateHints>> | undefined;
+  let selection: Awaited<ReturnType<typeof getFirstRealSozarSelectionContext>> | undefined;
+  if (baseId) {
+    try {
+      candidates = await getFirstRealSozarCandidateHints(baseId);
+      if (sourceRowRaw !== null && /^\d+$/.test(sourceRowRaw)) {
+        selection = await getFirstRealSozarSelectionContext(baseId, Number(sourceRowRaw));
+      }
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "No se pudo revisar la selección de Sozar.", configurationReady }, { status: 409 });
+    }
+  }
+  if (!event?.consulta) return Response.json({ status: "SIN_PRUEBA_REAL", configurationReady, candidates, selection });
   const stored = event.consulta.resultado?.resultado as { shape?: unknown; mapping?: unknown } | undefined;
-  return Response.json({ status: event.consulta.estado, configurationReady, consultedAt: event.consulta.resultado?.consultadoEn?.toISOString() ?? null, shape: stored?.shape ?? null, mapping: stored?.mapping ?? null });
+  return Response.json({ status: event.consulta.estado, configurationReady, consultedAt: event.consulta.resultado?.consultadoEn?.toISOString() ?? null, shape: stored?.shape ?? null, mapping: stored?.mapping ?? null, candidates, selection });
 }
