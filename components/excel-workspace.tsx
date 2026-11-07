@@ -33,7 +33,7 @@ import { simulateHlrMnp } from "@/lib/services/mock-hlr";
 import { getFirstRealSozarTestCandidates, getPendingRealHlrRecords, getRealHlrPreview } from "@/lib/services/real-hlr-preview";
 import { prepareDisabledRealHlrQueue, REAL_HLR_QUEUE_VERSION } from "@/lib/services/real-hlr-queue-plan";
 import { getFirstRealSozarUiReadiness } from "@/lib/services/sozar-first-real-ui-readiness";
-import { saveBatchToHistory } from "@/lib/persistence/client-base-save";
+import { batchSaveSignature, needsBatchSave, saveBatchToHistory } from "@/lib/persistence/client-base-save";
 import { buildMasterOutput } from "@/lib/export/xlsx-export";
 import {
   createWorkingBatch,
@@ -162,7 +162,7 @@ export function ExcelWorkspace() {
   const enrichmentOutput: EnrichmentOutput | null = batch?.enrichmentOutput ?? null;
   const historicalImportSummary = historicalResultStatus ?? batch?.historicalResultImport ?? null;
   const campaignFilters: CampaignFilters = batch?.campaignFilters ?? defaultCampaignFilters;
-  const batchSignature = useMemo(() => batch ? JSON.stringify(batch) : null, [batch]);
+  const batchSignature = useMemo(() => batch ? batchSaveSignature(batch) : null, [batch]);
 
   useEffect(() => {
     currentBatchRef.current = batch;
@@ -184,7 +184,7 @@ export function ExcelWorkspace() {
       const timer = window.setTimeout(() => setSaveState("saved"), 0);
       return () => window.clearTimeout(timer);
     }
-    if (lastSavedSignatureRef.current === batchSignature) {
+    if (!needsBatchSave(lastSavedSignatureRef.current, batchSignature)) {
       return;
     }
 
@@ -210,7 +210,7 @@ export function ExcelWorkspace() {
         })
         .finally(() => {
           saveInFlightRef.current = false;
-          if (completed && currentBatchRef.current && JSON.stringify(currentBatchRef.current) !== savingSignature) {
+          if (completed && currentBatchRef.current && batchSaveSignature(currentBatchRef.current) !== savingSignature) {
             setSaveRetry((current) => current + 1);
           }
         });
@@ -668,6 +668,18 @@ export function ExcelWorkspace() {
     setActiveModule(module);
   }
 
+  function openPersistedBatch(restored: WorkingBatch) {
+    // /api/bases/:id returns only completed server snapshots. Recording its
+    // signature here prevents an unchanged restored base from being written
+    // again in 100-record chunks merely because it was opened.
+    lastSavedSignatureRef.current = batchSaveSignature(restored);
+    setSaveState("saved");
+    setSaveError(null);
+    setBatch(restored);
+    setIsDemoMode(false);
+    setError(null);
+  }
+
   function openProcessing() {
     const current = ["importacion", "limpieza", "enriquecimiento", "campanas", "distribucion", "exportacion"].includes(activeModule)
       ? activeModule as import("@/lib/workspace/batch").ProcessingModule
@@ -922,7 +934,7 @@ export function ExcelWorkspace() {
   } else if (activeModule === "ventas") {
     moduleContent = <SalesWorkspace />;
   } else {
-    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={(restored) => { setBatch(restored); setIsDemoMode(false); setError(null); }} onSaved={(name) => setBatch((current) => current ? { ...current, displayName: name } : current)} onNavigate={(target = "dashboard") => navigate(target)} />;
+    moduleContent = <SavedBasesPanel key={batch?.id ?? "empty"} batch={batch} onOpen={openPersistedBatch} onSaved={(name) => setBatch((current) => current ? { ...current, displayName: name } : current)} onNavigate={(target = "dashboard") => navigate(target)} />;
   }
 
   return (

@@ -8,6 +8,7 @@ import { buildEnrichmentOutput } from "../lib/excel/enrichment-output.ts";
 import { datasetFromWorkbook } from "../lib/excel/import-excel.ts";
 import { buildExportPlan, MAX_BATCH_SIZE } from "../lib/export/xlsx-export.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
+import { batchSaveSignature, needsBatchSave } from "../lib/persistence/client-base-save.ts";
 import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
 
@@ -80,6 +81,8 @@ test("procesa, conserva y distribuye bases CRM sintéticas de 100, 1.000 y 10.00
     assert.equal(restored.dataset.records.length, recordCount);
     assert.equal(restored.enrichmentOutput?.rows.length, recordCount);
     assert.equal(restored.provenanceBySourceRow[2], "MOCK");
+    const restoredBaseline = batchSaveSignature(restored);
+    assert.equal(needsBatchSave(restoredBaseline, batchSaveSignature(restored)), false);
   }
 });
 

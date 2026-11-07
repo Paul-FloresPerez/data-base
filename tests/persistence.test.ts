@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getAccessDecision } from "../lib/auth/access-control.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
+import { batchSaveSignature, needsBatchSave } from "../lib/persistence/client-base-save.ts";
 import { cleanDataset } from "../lib/excel/cleaning.ts";
 import { createWorkingBatch, getProcessingModule } from "../lib/workspace/batch.ts";
 import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
@@ -21,6 +22,17 @@ test("serializa y recupera una base preservando los ceros y la limpieza", () => 
   assert.equal(restored.cleaning?.validRecords.length, 1);
   assert.equal(restored.cleaning?.excludedRecords[0]?.reason, "telefono_fijo");
   assert.equal(restored.provenanceBySourceRow[2], "EXCEL");
+});
+
+test("una base restaurada y completa establece un baseline y no dispara un autoguardado duplicado", () => {
+  const batch = createWorkingBatch(dataset, "11111111-1111-4111-8111-111111111119", "2026-11-07T00:00:00.000Z");
+  batch.cleaning = cleanDataset(dataset);
+  const { start, records } = serializeBatch(batch, "Base persistida");
+  const restored = restoreBatch({ id: start.id, name: start.name, createdAt: batch.createdAt, metadata: { ...start.metadata, completed: true, revision: null }, records: records.map((record, index) => ({ ...record, id: String(index) })) });
+  const baseline = batchSaveSignature(restored);
+  assert.equal(needsBatchSave(baseline, batchSaveSignature(restored)), false);
+  restored.displayName = "Base persistida corregida";
+  assert.equal(needsBatchSave(baseline, batchSaveSignature(restored)), true);
 });
 
 test("restaura el nombre elegido y el estado de exportación guardado", () => {

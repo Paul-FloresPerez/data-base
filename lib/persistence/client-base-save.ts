@@ -3,6 +3,19 @@
 import { buildStoredLots, serializeBatch, splitRecords } from "./workspace-persistence.ts";
 import type { WorkingBatch } from "../workspace/batch.ts";
 
+/**
+ * A restored completed base establishes this signature as its autosave
+ * baseline. Changes made after it is opened naturally produce a new signature
+ * and are still persisted through the normal revisioned workflow.
+ */
+export function batchSaveSignature(batch: WorkingBatch): string {
+  return JSON.stringify(batch);
+}
+
+export function needsBatchSave(lastSavedSignature: string | null, batchSignature: string): boolean {
+  return lastSavedSignature !== batchSignature;
+}
+
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
