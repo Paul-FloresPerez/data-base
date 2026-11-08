@@ -79,6 +79,19 @@ export function classifyRecyclingTipification(value: string | null | undefined):
   }
 }
 
+/**
+ * Selection is a per-execution candidate criterion, never a commercial
+ * authorization. It deliberately preserves every matching management so the
+ * caller can retain historical provenance and deduplicate only the mobile.
+ */
+export function selectRecyclableManagements<T extends { tipification: string | null | undefined }>(
+  managements: readonly T[],
+  selectedTipifications: readonly string[],
+): T[] {
+  const selected = new Set(selectedTipifications.map(normalizeRecyclingTipification).filter(Boolean));
+  return managements.filter((management) => selected.has(normalizeRecyclingTipification(management.tipification)));
+}
+
 function day(value: string): Date | null {
   const parts = parsePortabilityDateParts(value);
   return parts ? new Date(Date.UTC(Number(parts.anio), Number(parts.mes) - 1, Number(parts.dia))) : null;

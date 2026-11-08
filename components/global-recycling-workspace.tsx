@@ -153,6 +153,20 @@ export function GlobalRecyclingWorkspace({
     [sourceAnalysis],
   );
   const found = summary ? summary.logicalMobiles - summary.unmatched : 0;
+  const selectedAvailableTipifications = useMemo(
+    () => tips.filter((tipification) => selected.has(tipification)),
+    [selected, tips],
+  );
+  const selectedCandidateCount = useMemo(
+    () =>
+      new Set(
+        sourceAnalysis.records
+          .filter((record) => selected.has(normalizeRecyclingTipification(record.tipification)))
+          .map((record) => record.mobile),
+      ).size,
+    [selected, sourceAnalysis],
+  );
+  const excludedTipificationCount = tips.length - selectedAvailableTipifications.length;
   const toggle = (t: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -300,7 +314,7 @@ export function GlobalRecyclingWorkspace({
     }
   }
   async function prepare() {
-    if (!fileIds.length || !selected.size) {
+    if (!fileIds.length || !selectedAvailableTipifications.length) {
       setMessage(
         "Selecciona al menos una tipificación para incluirla en la evaluación.",
       );
@@ -317,7 +331,7 @@ export function GlobalRecyclingWorkspace({
             archivoCrmIds: fileIds,
             criteria: {
               effectiveDate: new Date().toISOString().slice(0, 10),
-              recyclableTipifications: [...selected],
+              recyclableTipifications: selectedAvailableTipifications,
               minimumMonths: 4,
               minimumDate: "2019-02-01",
             },
@@ -502,9 +516,29 @@ export function GlobalRecyclingWorkspace({
       <Step
         number={3}
         title="Evaluar para reciclaje"
-        detail="Las tipificaciones son criterios; la evaluación aplica controles comerciales en servidor."
+        detail="Las tipificaciones incluidas definen candidatos CRM. No autorizan contacto: ventas, oposición, reservas, operador verificable y permanencia se comprueban en servidor."
         done={execution?.status === "EVALUADA"}
       >
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-[#0f274f]">
+            Incluidas: {selectedAvailableTipifications.length}
+          </span>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+            Excluidas: {excludedTipificationCount}
+          </span>
+          <span className="text-slate-600">
+            {selectedCandidateCount} móvil{selectedCandidateCount === 1 ? "" : "es"} con alguna gestión incluida
+          </span>
+          <button type="button" onClick={() => setSelected(new Set(defaultRecyclableTipifications))} disabled={!!busy || !!execution} className="font-semibold text-[#174ea6] disabled:text-slate-400">
+            Restaurar iniciales
+          </button>
+          <button type="button" onClick={() => setSelected(new Set(tips))} disabled={!!busy || !!execution || !tips.length} className="font-semibold text-[#174ea6] disabled:text-slate-400">
+            Incluir todas
+          </button>
+          <button type="button" onClick={() => setSelected(new Set())} disabled={!!busy || !!execution || !selected.size} className="font-semibold text-[#174ea6] disabled:text-slate-400">
+            Excluir todas
+          </button>
+        </div>
         <div className="flex flex-wrap gap-2">
           {tips.map((t) => (
             <label
@@ -515,6 +549,7 @@ export function GlobalRecyclingWorkspace({
                 type="checkbox"
                 checked={selected.has(t)}
                 onChange={() => toggle(t)}
+                disabled={!!execution || !!busy}
                 className="mr-2 accent-[#174ea6]"
               />
               {t}
@@ -525,7 +560,7 @@ export function GlobalRecyclingWorkspace({
           <button
             type="button"
             onClick={() => void prepare()}
-            disabled={!found || !!busy || !!execution || !!issues.length}
+            disabled={!found || !selectedAvailableTipifications.length || !!busy || !!execution || !!issues.length}
             className="min-h-10 rounded-md bg-[#174ea6] px-4 text-sm font-semibold text-white disabled:bg-slate-300"
           >
             Preparar evaluación
@@ -539,6 +574,7 @@ export function GlobalRecyclingWorkspace({
             Evaluar para reciclaje
           </button>
         </div>
+        {!selectedAvailableTipifications.length ? <p className="mt-3 text-xs text-amber-800">Incluye al menos una tipificación para preparar una evaluación.</p> : null}
         {execution?.summary ? (
           <>
             <dl className="mt-4 grid grid-cols-2 divide-x divide-y divide-slate-200 border border-slate-200 sm:grid-cols-4">
@@ -555,6 +591,21 @@ export function GlobalRecyclingWorkspace({
                   <dd className="mt-1 text-xl font-semibold tabular-nums text-slate-900">
                     {v}
                   </dd>
+                </div>
+              ))}
+            </dl>
+            <dl className="mt-3 grid grid-cols-2 divide-x divide-y divide-slate-200 border border-slate-200 text-sm sm:grid-cols-3">
+              {[
+                ["Candidatos por tipificación", execution.summary.candidatosTipificacion ?? 0],
+                ["Ventas confirmadas", execution.summary.ventasConfirmadas ?? 0],
+                ["Oposición de contacto", execution.summary.oposicionesContacto ?? 0],
+                ["Reservas activas", execution.summary.reservasActivas ?? 0],
+                ["Condiciones comerciales", execution.summary.condicionesComerciales ?? 0],
+                ["Permanencia insuficiente", execution.summary.permanenciaInsuficiente ?? 0],
+              ].map(([l, v]) => (
+                <div key={String(l)} className="p-3">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{l}</dt>
+                  <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{v}</dd>
                 </div>
               ))}
             </dl>

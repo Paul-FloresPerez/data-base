@@ -47,17 +47,22 @@ Una tipificación de CRM nunca crea por sí sola una venta externa confirmada.
 |---|---|---|
 | CONTACTO_NO_ESTABLECIDO | NO RESPONDE, NO CONTESTA, BUZÓN DE VOZ | Candidato si cumple el resto de reglas |
 | CONTACTO_INTERRUMPIDO | CORTA LLAMADA | Candidato solo sin restricción posterior |
-| SEGUIMIENTO_PENDIENTE | AGENDADO | Revisión hasta resolución explícita |
-| INTERES_COMERCIAL | INTERESADO, CONOCE EL MÉTODO | Revisión hasta resolución explícita |
+| SEGUIMIENTO_PENDIENTE | AGENDADO | Historial informativo; no bloquea por sí solo una gestión candidata seleccionada |
+| INTERES_COMERCIAL | INTERESADO, CONOCE EL MÉTODO | Historial informativo; no bloquea por sí solo una gestión candidata seleccionada |
 | VENTA_CRM_NO_CONFIRMADA | VENTA, VENDIDO, VENTA CONFIRMADA | Revisión; no crea venta externa |
 | RECHAZO_COMERCIAL | NO INTERESA | Excluido del reciclaje automático |
 | DATOS_INCORRECTOS | OPERADOR INCORRECTO, NO ES TITULAR, TITULAR INCORRECTO | Revisión |
 | OPOSICION_CONTACTO | LISTA ROBINSON, OPOSICIÓN, NO LLAMAR, NO CONTACTAR | Supresión prioritaria y revisión |
 | OTROS_REQUIERE_REVISION | Cualquier texto no listado | Revisión conservadora |
 
-Las decisiones anteriores son obligatorias. La equivalencia de nuevos textos,
-la caducidad o cierre de AGENDADO/INTERESADO y listas externas de oposición
-requieren parametrización futura, evidencia auditada y pruebas de regresión.
+La selección se aplica a todas las gestiones históricas de un móvil: basta una
+gestión incluida para que sea candidato lógico, sin borrar ni preferir
+silenciosamente sus otras procedencias. AGENDADO e INTERESADO siguen visibles
+en el snapshot, pero no son vetos automáticos; una venta CRM, oposición,
+reserva, venta externa, ausencia de evidencia comercial verificable o
+permanencia insuficiente sí prevalecen. La equivalencia de nuevos textos y
+listas externas de oposición requieren parametrización futura, evidencia
+auditada y pruebas de regresión.
 
 ## Reciclaje global aprobado
 

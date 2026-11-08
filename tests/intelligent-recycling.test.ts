@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { classifyRecyclingTipification, evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification } from "../lib/recycling/intelligent-recycling.ts";
+import { classifyRecyclingTipification, evaluateIntelligentRecycling, minimumPortabilityDate, normalizeRecyclingTipification, selectRecyclableManagements } from "../lib/recycling/intelligent-recycling.ts";
 
 const criteria = (effectiveDate: string) => ({ effectiveDate, recyclableTipifications: ["NO CONTESTA", "BUZÓN DE VOZ", "CORTA LLAMADA"], minimumMonths: 4, minimumDate: minimumPortabilityDate });
 const original = (id: string, mobile: string, portabilityDate: string | null) => ({ id, mobile, portabilityDate });
@@ -56,6 +56,17 @@ test("clasifica tipificaciones con una política conservadora y auditable", () =
   assert.equal(classifyRecyclingTipification("Titular incorrecto"), "DATOS_INCORRECTOS");
   assert.equal(classifyRecyclingTipification("No contactar"), "OPOSICION_CONTACTO");
   assert.equal(classifyRecyclingTipification("texto no aprobado"), "OTROS_REQUIERE_REVISION");
+});
+
+test("la selección global conserva todas las gestiones candidatas de un móvil", () => {
+  const events = [
+    { id: "no-responde", tipification: "NO RESPONDE" },
+    { id: "agendado", tipification: "AGENDADO" },
+    { id: "buzon", tipification: "buzon de voz" },
+    { id: "interesado", tipification: "INTERESADO" },
+  ];
+  const selected = selectRecyclableManagements(events, ["NO CONTESTA", "BUZÓN DE VOZ"]);
+  assert.deepEqual(selected.map((event) => event.id), ["no-responde", "buzon"]);
 });
 
 test("no recicla seguimientos, interés, ventas CRM, oposición o rechazo sin una resolución explícita", () => {

@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma } from "../../generated/prisma/client.ts";
 import { materialConflicts } from "../recycling/global-conciliation.ts";
-import { classifyRecyclingTipification, minimumPortabilityDate, normalizeRecyclingTipification } from "../recycling/intelligent-recycling.ts";
+import { classifyRecyclingTipification, minimumPortabilityDate, normalizeRecyclingTipification, selectRecyclableManagements } from "../recycling/intelligent-recycling.ts";
 import { buildCrmRecyclingOutput, CRM_RECYCLING_HEADERS } from "../export/crm-recycling-export.ts";
 import { nextBaseCode } from "./base-code.ts";
 import { lockCommercialMobiles } from "./commercial-locks.ts";
@@ -10,7 +10,7 @@ import { prisma } from "./prisma.ts";
 
 const BASE_PAGE_SIZE = 250;
 const MOBILE_PAGE_SIZE = 250;
-export const GLOBAL_RECYCLING_RULE_VERSION = "2026-11-03.v2";
+export const GLOBAL_RECYCLING_RULE_VERSION = "2026-11-08.v3";
 
 export type GlobalRecyclingCriteria = {
   effectiveDate: string;
@@ -20,6 +20,13 @@ export type GlobalRecyclingCriteria = {
 };
 
 type Decision = "ELEGIBLE" | "EXCLUIDO" | "REVISION" | "BLOQUEADO";
+type EvaluationIndicator =
+  | "candidatosTipificacion"
+  | "ventasConfirmadas"
+  | "oposicionesContacto"
+  | "reservasActivas"
+  | "condicionesComerciales"
+  | "permanenciaInsuficiente";
 
 function day(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -122,7 +129,7 @@ function decide(input: {
   blocked: boolean;
   reserved: boolean;
   criteria: ReturnType<typeof validateCriteria>;
-}): { decision: Decision; reason: string; sources: Prisma.InputJsonValue } {
+}): { decision: Decision; reason: string; sources: Prisma.InputJsonValue; indicators: EvaluationIndicator[] } {
   const sources = {
     // v2 keeps non-personal comparison evidence, source IDs and management
     // facts. It deliberately avoids copying names/documents into the snapshot.
@@ -137,42 +144,44 @@ function decide(input: {
     canonicalRows: input.canonicalRows.map((row) => ({ rowId: row.id, archivoCrmId: row.archivoCrmId, hoja: row.hojaOrigen, fila: row.numeroFilaOrigen, fechaGestion: row.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(row.tipificacionOriginal), ventaConfirmada: row.ventaConfirmada })),
     legacyManagements: input.legacyManagements.map((management) => ({ managementId: management.id, archivoId: management.archivoId, fila: management.numeroFilaOrigen, fechaGestion: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(management.tipificacionOriginal), ventaConfirmada: management.ventaConfirmada, ventaAmbigua: saleAmbiguous(management.metadatos) })),
   } as Prisma.InputJsonValue;
-  if (input.blocked) return { decision: "BLOQUEADO", reason: "Venta confirmada en registro comercial externo", sources };
-  if (!input.records.length) return { decision: "REVISION", reason: "Sin registro válido en el universo de bases original", sources };
-  if (input.records.every((record) => record.provenance === "MOCK")) return { decision: "REVISION", reason: "Solo existe enriquecimiento MOCK; no es evidencia comercial definitiva", sources };
   const managements = [
     ...input.canonicalRows.map((row) => ({ id: row.id, managedAt: row.fechaGestion, tipification: row.tipificacionOriginal, confirmed: row.ventaConfirmada, evidence: row.evidenciaVenta, ambiguous: false })),
     ...input.legacyManagements.map((row) => ({ id: row.id, managedAt: row.fechaGestion, tipification: row.tipificacionOriginal, confirmed: row.ventaConfirmada, evidence: row.evidenciaVenta, ambiguous: saleAmbiguous(row.metadatos) })),
   ];
+  const selectedManagements = selectRecyclableManagements(managements, input.criteria.recyclableTipifications);
+  const indicators: EvaluationIndicator[] = selectedManagements.length ? ["candidatosTipificacion"] : [];
+  if (input.blocked) return { decision: "BLOQUEADO", reason: "Venta confirmada en registro comercial externo", sources, indicators: [...indicators, "ventasConfirmadas"] };
+  if (!input.records.length) return { decision: "REVISION", reason: "Sin registro válido en el universo de bases original", sources, indicators: [...indicators, "condicionesComerciales"] };
+  if (input.records.every((record) => record.provenance === "MOCK")) return { decision: "REVISION", reason: "Solo existe enriquecimiento MOCK; no es evidencia comercial definitiva", sources, indicators: [...indicators, "condicionesComerciales"] };
   const opposition = managements.find((management) => classifyRecyclingTipification(management.tipification) === "OPOSICION_CONTACTO");
-  if (opposition) return { decision: "REVISION", reason: "Oposición al contacto documentada; supresión comercial prioritaria", sources };
-  if (input.reserved) return { decision: "REVISION", reason: "Reserva comercial activa; requiere liberación explícita", sources };
+  if (opposition) return { decision: "REVISION", reason: "Oposición al contacto documentada; supresión comercial prioritaria", sources, indicators: [...indicators, "oposicionesContacto"] };
+  if (input.reserved) return { decision: "REVISION", reason: "Reserva comercial activa; requiere liberación explícita", sources, indicators: [...indicators, "reservasActivas"] };
   const conflicts = materialConflicts(input.records.map((record) => ({ documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: record.provenance })));
-  if (conflicts.length) return { decision: "REVISION", reason: `Contradicción material: ${conflicts.join(", ")}`, sources };
-  const pending = managements.find((management) => {
-    const category = classifyRecyclingTipification(management.tipification);
-    return category === "SEGUIMIENTO_PENDIENTE" || category === "INTERES_COMERCIAL";
-  });
-  if (pending) return { decision: "REVISION", reason: "Seguimiento o interés comercial pendiente de resolución explícita", sources };
+  if (conflicts.length) return { decision: "REVISION", reason: `Contradicción material: ${conflicts.join(", ")}`, sources, indicators: [...indicators, "condicionesComerciales"] };
   const crmSale = managements.find((management) => management.confirmed || classifyRecyclingTipification(management.tipification) === "VENTA_CRM_NO_CONFIRMADA");
-  if (crmSale) return { decision: "REVISION", reason: "Venta indicada en CRM sin confirmación en Ventas", sources };
-  if (managements.some((management) => management.ambiguous)) return { decision: "REVISION", reason: "Dato de venta ambiguo; requiere revisión humana", sources };
+  if (crmSale) return { decision: "REVISION", reason: "Venta indicada en CRM sin confirmación en Ventas", sources, indicators };
+  if (managements.some((management) => management.ambiguous)) return { decision: "REVISION", reason: "Dato de venta ambiguo; requiere revisión humana", sources, indicators };
   const dated = managements.flatMap((management) => management.managedAt ? [{ ...management, date: management.managedAt }] : []);
-  if (!dated.length) return { decision: "REVISION", reason: "Sin gestión CRM con fecha válida", sources };
+  if (!dated.length) return { decision: "REVISION", reason: "Sin gestión CRM con fecha válida", sources, indicators };
   dated.sort((left, right) => right.date.getTime() - left.date.getTime());
   const newest = dated[0]!;
-  const types = new Set(dated.filter((entry) => entry.date.getTime() === newest.date.getTime()).map((entry) => normalizeRecyclingTipification(entry.tipification)));
-  if (types.size > 1) return { decision: "REVISION", reason: "Tipificaciones contradictorias en la misma fecha", sources };
-  if (classifyRecyclingTipification(newest.tipification) === "RECHAZO_COMERCIAL") return { decision: "EXCLUIDO", reason: "Rechazo comercial; no se recicla automáticamente", sources };
-  if (classifyRecyclingTipification(newest.tipification) === "DATOS_INCORRECTOS") return { decision: "REVISION", reason: "Datos de contacto o titularidad requieren revisión", sources };
-  if (!input.criteria.recyclableTipifications.includes(normalizeRecyclingTipification(newest.tipification))) return { decision: "EXCLUIDO", reason: "Tipificación no seleccionada o no reconocida", sources };
+  // AGENDADO e INTERESADO se conservan como gestiones históricas, pero no
+  // invalidan por sí solas una candidatura originada por otra gestión elegida.
+  if (classifyRecyclingTipification(newest.tipification) === "RECHAZO_COMERCIAL") return { decision: "EXCLUIDO", reason: "Rechazo comercial posterior; no se recicla automáticamente", sources, indicators };
+  if (classifyRecyclingTipification(newest.tipification) === "DATOS_INCORRECTOS") return { decision: "REVISION", reason: "Datos de contacto o titularidad requieren revisión", sources, indicators };
+  if (!selectedManagements.length) return { decision: "EXCLUIDO", reason: "Ninguna gestión CRM coincide con las tipificaciones seleccionadas", sources, indicators };
+  // Recycling does not select a campaign. A base can only become commercially
+  // eligible when it has a trustworthy current operator; campaign-matrix
+  // compatibility remains a final distribution-side validation.
+  const trustedOperator = input.records.some((record) => record.provenance === "API_REAL" && Boolean(record.operadorActual?.trim()));
+  if (!trustedOperator) return { decision: "REVISION", reason: "Operador actual no verificado para elegibilidad comercial", sources, indicators: [...indicators, "condicionesComerciales"] };
   const portability = input.records.find((record) => record.fechaPortabilidad)?.fechaPortabilidad ?? null;
   const effective = day(input.criteria.effectiveDate)!;
   const minimum = day(input.criteria.minimumDate)!;
-  if (!portability) return { decision: "REVISION", reason: "Fecha de portabilidad ausente o inválida", sources };
-  if (portability.getTime() < minimum.getTime()) return { decision: "REVISION", reason: "Fecha de portabilidad anterior al mínimo histórico", sources };
-  if (completedMonths(portability, effective) < input.criteria.minimumMonths) return { decision: "REVISION", reason: "No cumple cuatro meses calendario completos de permanencia", sources };
-  return { decision: "ELEGIBLE", reason: "Tipificación seleccionada y permanencia cumplida", sources };
+  if (!portability) return { decision: "REVISION", reason: "Fecha de portabilidad ausente o inválida", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
+  if (portability.getTime() < minimum.getTime()) return { decision: "REVISION", reason: "Fecha de portabilidad anterior al mínimo histórico", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
+  if (completedMonths(portability, effective) < input.criteria.minimumMonths) return { decision: "REVISION", reason: "No cumple cuatro meses calendario completos de permanencia", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
+  return { decision: "ELEGIBLE", reason: "Tipificación seleccionada, operador verificado y permanencia cumplida", sources, indicators };
 }
 
 export async function evaluateGlobalRecyclingExecution(executionId: string) {
@@ -193,7 +202,11 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
     const value = file.metadatos && typeof file.metadatos === "object" ? (file.metadatos as { archivoTipificacionesLegacyId?: unknown }).archivoTipificacionesLegacyId : null;
     return typeof value === "string" ? [value] : [];
   });
-  const summary: Record<Decision | "evaluated", number> = { evaluated: 0, ELEGIBLE: 0, EXCLUIDO: 0, REVISION: 0, BLOQUEADO: 0 };
+  const summary: Record<Decision | "evaluated" | EvaluationIndicator, number> = {
+    evaluated: 0, ELEGIBLE: 0, EXCLUIDO: 0, REVISION: 0, BLOQUEADO: 0,
+    candidatosTipificacion: 0, ventasConfirmadas: 0, oposicionesContacto: 0,
+    reservasActivas: 0, condicionesComerciales: 0, permanenciaInsuficiente: 0,
+  };
   let cursor: string | null = null;
   try {
     do {
@@ -243,6 +256,7 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
         });
         summary.evaluated += 1;
         summary[result.decision] += 1;
+        for (const indicator of result.indicators) summary[indicator] += 1;
         return { ejecucionId: executionId, movilNormalizado: mobile, decision: result.decision, motivo: result.reason, fuentes: result.sources };
       });
       await prisma.decisionEjecucionReciclajeGlobal.createMany({ data: decisions, skipDuplicates: true });

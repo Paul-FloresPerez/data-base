@@ -72,7 +72,11 @@ test("RG-5 conecta archivo canónico, conciliación global y generación protegi
     assert.match(route, /requireAdminApi/);
   assert.match(workspace, /Registrar archivo/);
   assert.match(workspace, /Comprobar contra bases activas/);
-  assert.match(workspace, /Las tipificaciones son criterios/);
+  assert.match(workspace, /Las tipificaciones incluidas definen candidatos CRM/);
+  assert.match(workspace, /Incluidas:/);
+  assert.match(workspace, /Excluidas:/);
+  assert.match(workspace, /Candidatos por tipificación/);
+  assert.match(workspace, /!selected\.size/);
   assert.match(workspace, /Generar base reciclada/);
   assert.match(workspace, /Descargar XLSX CRM/);
   assert.match(workspace, /summary\.logicalMobiles/);

@@ -15,5 +15,9 @@ test("RG-3 conserva decisiones globales inmutables sin integrar Sozar", async ()
   assert.doesNotMatch(migration, /^\s*(DROP|TRUNCATE|DELETE\s+FROM|UPDATE\s+)/im);
   assert.match(storage, /estado: "EVALUANDO"/);
   assert.match(storage, /skipDuplicates: true/);
+  assert.match(storage, /selectRecyclableManagements/);
+  assert.match(storage, /candidatosTipificacion/);
+  assert.match(storage, /Operador actual no verificado para elegibilidad comercial/);
+  assert.doesNotMatch(storage, /Seguimiento o interés comercial pendiente de resolución explícita/);
   assert.doesNotMatch(storage, /sozar|fetch\(/i);
 });

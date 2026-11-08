@@ -30,8 +30,8 @@ decision aid, not a replacement for `docs/REGLAS_INVIOLABLES.md`.
 |---|---|---|
 | Approved + implemented | CRM managements are append-only; canonical files can have multiple sources and global recycling consolidates one logical mobile with provenance. | `lib/server/canonical-crm-storage.ts`, `lib/server/global-crm-conciliation-storage.ts`, global recycling tests. |
 | Approved + implemented | Four completed calendar months, historical minimum 2019-02-01, confirmed sales, active reservations, opposition and material conflicts are conservative gates. | `lib/recycling/intelligent-recycling.ts`, `lib/server/global-recycling-storage.ts`. |
-| Gap | The business instruction says historical AGENDADO/INTERESADO alone should not be permanent automatic blocks. Current evaluator marks any such management as review until explicit resolution, even if historical. | `lib/recycling/intelligent-recycling.ts`, `tests/intelligent-recycling.test.ts`. Requires explicit policy before change. |
-| Undecided | The lifecycle/caducity or explicit resolution rules for AGENDADO and INTERESADO, and future typification mappings, are not defined. | Rules § Tipificaciones. |
+| Approved + implemented | In Global Recycling, historical AGENDADO/INTERESADO remain provenance but do not independently veto a mobile that has another selected candidate management. Mandatory commercial protections still prevail. | `lib/server/global-recycling-storage.ts`, `docs/REGLAS_INVIOLABLES.md` § Tipificaciones. |
+| Undecided | The lifecycle/caducity of AGENDADO/INTERESADO and future typification mappings remain undefined; no automatic expiry is inferred. | Rules § Tipificaciones. |
 | Implemented | Eligible recycled output projects exactly 24 CRM headers as text; absent values remain empty. | `lib/export/crm-recycling-export.ts`, `tests/crm-recycling-export.test.ts`. |
 
 ## Sozar
