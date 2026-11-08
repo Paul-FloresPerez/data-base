@@ -154,6 +154,7 @@ export function ExcelWorkspace() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveRetry, setSaveRetry] = useState(0);
   const [isConfirmingCommercialDistribution, setIsConfirmingCommercialDistribution] = useState(false);
+  const [commercialTransitionStatus, setCommercialTransitionStatus] = useState<string | null>(null);
   const currentBatchRef = useRef<WorkingBatch | null>(null);
   const saveInFlightRef = useRef(false);
   const lastSavedSignatureRef = useRef<string | null>(null);
@@ -653,8 +654,11 @@ export function ExcelWorkspace() {
     setIsConfirmingCommercialDistribution(true);
     setSaveError(null);
     try {
-      await saveBatchToHistory(batch, batch.displayName ?? batch.fileName.replace(/\.xlsx$/i, ""), { confirmCommercialDistribution: true });
+      const result = await saveBatchToHistory(batch, batch.displayName ?? batch.fileName.replace(/\.xlsx$/i, ""), { confirmCommercialDistribution: true });
       setBatch((currentBatch) => currentBatch?.id === batch.id ? { ...currentBatch, commercialDistributionConfirmed: true } : currentBatch);
+      setCommercialTransitionStatus(result.releasedPriorReservations
+        ? `${result.releasedPriorReservations} asignación${result.releasedPriorReservations === 1 ? " anterior se cerró" : "es anteriores se cerraron"} y ${result.createdLots} lote${result.createdLots === 1 ? " fue creado" : "s fueron creados"} en la misma transacción.`
+        : null);
       setSaveState("saved");
     } catch (error) {
       setSaveState("error");
@@ -675,6 +679,7 @@ export function ExcelWorkspace() {
     lastSavedSignatureRef.current = batchSaveSignature(restored);
     setSaveState("saved");
     setSaveError(null);
+    setCommercialTransitionStatus(null);
     setBatch(restored);
     setIsDemoMode(false);
     setError(null);
@@ -895,7 +900,7 @@ export function ExcelWorkspace() {
       return <EmptyModuleState title="Primero completa las campañas" description="La distribución usa los registros enriquecidos y los filtros activos de las campañas para calcular los lotes." action={<PrimaryButton type="button" onClick={() => navigate("campanas")}>Ir a campañas</PrimaryButton>} />;
     }
 
-    return <DistributionWorkspace batch={summarizeBatch(batch)} commercialDistributionConfirmed={batch.commercialDistributionConfirmed} isConfirmingCommercialDistribution={isConfirmingCommercialDistribution} report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onConfirmCommercialDistribution={() => void confirmCommercialDistribution()} onContinue={() => navigate("exportacion")} />;
+    return <DistributionWorkspace batch={summarizeBatch(batch)} commercialDistributionConfirmed={batch.commercialDistributionConfirmed} isConfirmingCommercialDistribution={isConfirmingCommercialDistribution} commercialTransitionStatus={commercialTransitionStatus} report={campaignReport} settings={batch.distribution} onSettingsChange={updateDistribution} onBack={() => navigate("campanas")} onConfirmCommercialDistribution={() => void confirmCommercialDistribution()} onContinue={() => navigate("exportacion")} />;
   }
 
   function renderExportModule() {

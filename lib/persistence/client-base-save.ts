@@ -22,6 +22,12 @@ export function needsBatchSave(lastSavedSignature: string | null, batchSignature
   return lastSavedSignature !== batchSignature;
 }
 
+export type BatchSaveResult = {
+  ok: true;
+  createdLots: number;
+  releasedPriorReservations: number;
+};
+
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -39,7 +45,7 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
  * fresh revision for the same UUID, so a failed client request never exposes a
  * partial base as usable data.
  */
-export async function saveBatchToHistory(batch: WorkingBatch, name: string, options: { confirmCommercialDistribution?: boolean } = {}): Promise<void> {
+export async function saveBatchToHistory(batch: WorkingBatch, name: string, options: { confirmCommercialDistribution?: boolean } = {}): Promise<BatchSaveResult> {
   const { start, records } = serializeBatch(batch, name);
   await request("/api/bases", { method: "POST", body: JSON.stringify(start) });
   for (const chunk of splitRecords(records)) {
@@ -48,7 +54,7 @@ export async function saveBatchToHistory(batch: WorkingBatch, name: string, opti
       body: JSON.stringify({ revision: start.revision, records: chunk }),
     });
   }
-  await request(`/api/bases/${start.id}/finalizar`, {
+  return request<BatchSaveResult>(`/api/bases/${start.id}/finalizar`, {
     method: "POST",
     // Autosave and "Guardar base" persist the base only. Commercial lots and
     // reservations require the explicit confirmation action in Distribución.

@@ -44,7 +44,9 @@ try {
   const decisions = await db.decisionEjecucionReciclajeGlobal.findMany({ where: { ejecucionId: created.id }, select: { movilNormalizado: true, decision: true, motivo: true, fuentes: true } });
   const count = decisions.reduce<Record<string, number>>((a, x) => ({ ...a, [x.decision]: (a[x.decision] ?? 0) + 1 }), {});
   const reasons = decisions.reduce<Record<string, number>>((a, x) => ({ ...a, [x.motivo]: (a[x.motivo] ?? 0) + 1 }), {});
-  if (decisions.length !== 10 || count.ELEGIBLE !== 2 || count.EXCLUIDO !== 1 || count.BLOQUEADO !== 1 || count.REVISION !== 6 || !decisions.every((d) => Array.isArray((d.fuentes as { records?: unknown }).records))) throw new Error(`Global decisions are not complete: ${JSON.stringify({ count, reasons })}`);
+  const reservedDecision = decisions.find((decision) => decision.movilNormalizado === mobiles[3]);
+  const reservationIds = reservedDecision?.fuentes && typeof reservedDecision.fuentes === "object" ? (reservedDecision.fuentes as { activeReservationIds?: unknown }).activeReservationIds : null;
+  if (decisions.length !== 10 || count.ELEGIBLE !== 3 || count.EXCLUIDO !== 1 || count.BLOQUEADO !== 1 || count.REVISION !== 5 || !decisions.every((d) => Array.isArray((d.fuentes as { records?: unknown }).records)) || !Array.isArray(reservationIds) || reservationIds.length !== 1) throw new Error(`Global decisions are not complete: ${JSON.stringify({ count, reasons })}`);
   await db.ventaExterna.create({ data: { importacionId: saleImport.id, numeroFilaOrigen: 3, movilNormalizado: mobiles[0]!, estado: "CONFIRMADA", resultadoConciliacion: "SINTETICO", metadatos: meta } });
   const next = await createGlobalRecyclingExecution({ operationId: `rg3-next-${run}`, userId: ids.user, archivoCrmIds: [ids.file], criteria });
   await evaluateGlobalRecyclingExecution(next.id);

@@ -128,6 +128,7 @@ function decide(input: {
   legacyManagements: { id: string; archivoId: string; numeroFilaOrigen: number; fechaGestion: Date | null; tipificacionOriginal: string | null; ventaConfirmada: boolean; evidenciaVenta: string | null; metadatos: unknown }[];
   blocked: boolean;
   reserved: boolean;
+  reservationIds: readonly string[];
   criteria: ReturnType<typeof validateCriteria>;
 }): { decision: Decision; reason: string; sources: Prisma.InputJsonValue; indicators: EvaluationIndicator[] } {
   const sources = {
@@ -143,6 +144,7 @@ function decide(input: {
     })),
     canonicalRows: input.canonicalRows.map((row) => ({ rowId: row.id, archivoCrmId: row.archivoCrmId, hoja: row.hojaOrigen, fila: row.numeroFilaOrigen, fechaGestion: row.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(row.tipificacionOriginal), ventaConfirmada: row.ventaConfirmada })),
     legacyManagements: input.legacyManagements.map((management) => ({ managementId: management.id, archivoId: management.archivoId, fila: management.numeroFilaOrigen, fechaGestion: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(management.tipificacionOriginal), ventaConfirmada: management.ventaConfirmada, ventaAmbigua: saleAmbiguous(management.metadatos) })),
+    activeReservationIds: [...input.reservationIds],
   } as Prisma.InputJsonValue;
   const managements = [
     ...input.canonicalRows.map((row) => ({ id: row.id, managedAt: row.fechaGestion, tipification: row.tipificacionOriginal, confirmed: row.ventaConfirmada, evidence: row.evidenciaVenta, ambiguous: false })),
@@ -155,7 +157,7 @@ function decide(input: {
   if (input.records.every((record) => record.provenance === "MOCK")) return { decision: "REVISION", reason: "Solo existe enriquecimiento MOCK; no es evidencia comercial definitiva", sources, indicators: [...indicators, "condicionesComerciales"] };
   const opposition = managements.find((management) => classifyRecyclingTipification(management.tipification) === "OPOSICION_CONTACTO");
   if (opposition) return { decision: "REVISION", reason: "Oposición al contacto documentada; supresión comercial prioritaria", sources, indicators: [...indicators, "oposicionesContacto"] };
-  if (input.reserved) return { decision: "REVISION", reason: "Reserva comercial activa; requiere liberación explícita", sources, indicators: [...indicators, "reservasActivas"] };
+  if (input.reserved) indicators.push("reservasActivas");
   const conflicts = materialConflicts(input.records.map((record) => ({ documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: record.provenance })));
   if (conflicts.length) return { decision: "REVISION", reason: `Contradicción material: ${conflicts.join(", ")}`, sources, indicators: [...indicators, "condicionesComerciales"] };
   const crmSale = managements.find((management) => management.confirmed || classifyRecyclingTipification(management.tipification) === "VENTA_CRM_NO_CONFIRMADA");
@@ -181,7 +183,14 @@ function decide(input: {
   if (!portability) return { decision: "REVISION", reason: "Fecha de portabilidad ausente o inválida", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
   if (portability.getTime() < minimum.getTime()) return { decision: "REVISION", reason: "Fecha de portabilidad anterior al mínimo histórico", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
   if (completedMonths(portability, effective) < input.criteria.minimumMonths) return { decision: "REVISION", reason: "No cumple cuatro meses calendario completos de permanencia", sources, indicators: [...indicators, "permanenciaInsuficiente"] };
-  return { decision: "ELEGIBLE", reason: "Tipificación seleccionada, operador verificado y permanencia cumplida", sources, indicators };
+  return {
+    decision: "ELEGIBLE",
+    reason: input.reserved
+      ? "Tipificación seleccionada; la reserva anterior se transferirá atómicamente al confirmar el nuevo lote"
+      : "Tipificación seleccionada, operador verificado y permanencia cumplida",
+    sources,
+    indicators,
+  };
 }
 
 export async function evaluateGlobalRecyclingExecution(executionId: string) {
@@ -235,7 +244,7 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
           },
         }),
         prisma.ventaExterna.findMany({ where: { movilNormalizado: { in: selected }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } }),
-        prisma.reservaComercial.findMany({ where: { movilNormalizado: { in: selected }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
+        prisma.reservaComercial.findMany({ where: { movilNormalizado: { in: selected }, estado: "ACTIVA" }, select: { id: true, movilNormalizado: true } }),
         legacyIds.length ? prisma.gestionTipificacion.findMany({ where: { archivoId: { in: legacyIds }, movilNormalizado: { in: selected } }, select: { id: true, archivoId: true, numeroFilaOrigen: true, movilNormalizado: true, fechaGestion: true, tipificacionOriginal: true, ventaConfirmada: true, evidenciaVenta: true, metadatos: true } }) : [],
       ]);
       const group = <T extends { movilNormalizado: string | null }>(items: readonly T[]) => {
@@ -247,12 +256,12 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
       const byRecords = group(records);
       const byLegacy = group(legacy);
       const sold = new Set(sales.flatMap((row) => row.movilNormalizado ? [row.movilNormalizado] : []));
-      const reserved = new Set(reservations.map((row) => row.movilNormalizado));
+      const reservationsByMobile = group(reservations);
       const decisions = selected.map((mobile) => {
         const result = decide({
           mobile,
           records: (byRecords.get(mobile) ?? []).map((record) => ({ id: record.id, baseId: record.base.id, baseCode: record.base.codigo, sourceRow: record.numeroFilaOriginal, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: provenance(record.datosOriginales) })),
-          canonicalRows: byRows.get(mobile) ?? [], legacyManagements: byLegacy.get(mobile) ?? [], blocked: sold.has(mobile), reserved: reserved.has(mobile), criteria,
+          canonicalRows: byRows.get(mobile) ?? [], legacyManagements: byLegacy.get(mobile) ?? [], blocked: sold.has(mobile), reserved: (reservationsByMobile.get(mobile) ?? []).length > 0, reservationIds: (reservationsByMobile.get(mobile) ?? []).map((reservation) => reservation.id), criteria,
         });
         summary.evaluated += 1;
         summary[result.decision] += 1;
@@ -270,16 +279,19 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
   }
 }
 
-type DecisionSource = { version?: unknown; records?: unknown };
+type DecisionSource = { version?: unknown; records?: unknown; activeReservationIds?: unknown };
 
-function sourceEvidence(value: unknown): { version: number; records: { recordId: string }[] } | null {
+function sourceEvidence(value: unknown): { version: number; records: { recordId: string }[]; activeReservationIds: string[] } | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as DecisionSource;
   if (candidate.version !== 2 || !Array.isArray(candidate.records)) return null;
   const records = candidate.records.flatMap((item) => item && typeof item === "object" && typeof (item as { recordId?: unknown }).recordId === "string"
     ? [{ recordId: (item as { recordId: string }).recordId }]
     : []);
-  return records.length ? { version: 2, records } : null;
+  const activeReservationIds = Array.isArray(candidate.activeReservationIds)
+    ? [...new Set(candidate.activeReservationIds.filter((id): id is string => typeof id === "string"))]
+    : [];
+  return records.length ? { version: 2, records, activeReservationIds } : null;
 }
 
 function crmCells(record: { datosOriginales: unknown; movilNormalizado: string | null }, metadata: unknown) {
@@ -297,7 +309,7 @@ function crmCells(record: { datosOriginales: unknown; movilNormalizado: string |
   return projected;
 }
 
-function generationMetadata(executionId: string, sources: readonly { baseId: string; recordId: string; sourceRow: number }[]) {
+function generationMetadata(executionId: string, sources: readonly { baseId: string; recordId: string; sourceRow: number }[], transitionReservationCount: number) {
   return {
     version: 1, completed: true, revision: null,
     originalFileName: `RECICLAJE_GLOBAL_${executionId}.xlsx`,
@@ -306,6 +318,7 @@ function generationMetadata(executionId: string, sources: readonly { baseId: str
     campaignFilters: { includeUnknown: false }, distribution: { selectedCampaigns: [], batchSize: 100 },
     enrichmentSource: "crm", kind: "RECICLADA", operationalSourceRows: sources.map((source) => source.sourceRow),
     globalRecyclingExecutionId: executionId, globalSources: sources,
+    globalTransitionReservationCount: transitionReservationCount,
   };
 }
 
@@ -369,19 +382,27 @@ export async function generateGlobalRecycledBase(input: { executionId: string; u
       const mobiles = decisions.map((row) => row.movilNormalizado);
       const [sales, reservations] = await Promise.all([
         tx.ventaExterna.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } }),
-        tx.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { movilNormalizado: true } }),
+        tx.reservaComercial.findMany({ where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" }, select: { id: true, movilNormalizado: true } }),
       ]);
-      const sold = new Set(sales.map((row) => row.movilNormalizado)); const reserved = new Set(reservations.map((row) => row.movilNormalizado));
+      const sold = new Set(sales.map((row) => row.movilNormalizado));
+      const activeReservationsByMobile = new Map<string, string[]>();
+      for (const reservation of reservations) {
+        activeReservationsByMobile.set(reservation.movilNormalizado, [...(activeReservationsByMobile.get(reservation.movilNormalizado) ?? []), reservation.id]);
+      }
       const sourceIds = decisions.flatMap((decision) => sourceEvidence(decision.fuentes)?.records.map((record) => record.recordId) ?? []);
       const records = await tx.registro.findMany({ where: { id: { in: sourceIds }, tipificacion: "VALIDO", base: { is: { tipo: "ORIGINAL" } } }, select: { id: true, baseId: true, numeroFilaOriginal: true, movilNormalizado: true, documento: true, nombre: true, operadorActual: true, operadorOriginal: true, fechaPortabilidad: true, tipificacion: true, datosOriginales: true, base: { select: { codigo: true, nombreDescriptivo: true, nombreOriginal: true, fechaRecepcion: true, metadatos: true } } } });
       const byMobile = new Map<string, typeof records>();
       for (const record of records) if (record.movilNormalizado) byMobile.set(record.movilNormalizado, [...(byMobile.get(record.movilNormalizado) ?? []), record]);
-      const included: typeof records = []; const outcomes: { movilNormalizado: string; estado: "INCLUIDO" | "EXCLUIDO_CAMBIO"; motivo: string; procedencias: Prisma.InputJsonValue }[] = [];
+      const included: typeof records = [];
+      const transitionReservationIdsByMobile = new Map<string, string[]>();
+      const outcomes: { movilNormalizado: string; estado: "INCLUIDO" | "EXCLUIDO_CAMBIO"; motivo: string; procedencias: Prisma.InputJsonValue }[] = [];
       for (const decision of decisions) {
         const candidates = (byMobile.get(decision.movilNormalizado) ?? []).sort((a, b) => a.base.codigo.localeCompare(b.base.codigo) || a.numeroFilaOriginal - b.numeroFilaOriginal || a.id.localeCompare(b.id));
-        let reason: string | null = sold.has(decision.movilNormalizado) ? "Venta confirmada desde la evaluación" : reserved.has(decision.movilNormalizado) ? "Reserva comercial activa desde la evaluación" : null;
         const snapshot = sourceEvidence(decision.fuentes);
+        const activeReservationIds = activeReservationsByMobile.get(decision.movilNormalizado) ?? [];
+        let reason: string | null = sold.has(decision.movilNormalizado) ? "Venta confirmada desde la evaluación" : null;
         if (!reason && !snapshot) reason = "Snapshot RG-3 sin evidencia v2; crea una nueva ejecución";
+        if (!reason && activeReservationIds.some((id) => !snapshot!.activeReservationIds.includes(id))) reason = "La reserva activa cambió desde la evaluación; crea una nueva ejecución";
         if (!reason && !candidates.length) reason = "Registro original ya no está disponible";
         if (!reason) {
           const conflicts = materialConflicts(candidates.map((record) => ({ documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: provenance(record.datosOriginales) })));
@@ -390,15 +411,20 @@ export async function generateGlobalRecycledBase(input: { executionId: string; u
         }
         const sources = candidates.map((record) => ({ baseId: record.baseId, baseCode: record.base.codigo, recordId: record.id, sourceRow: record.numeroFilaOriginal }));
         if (reason) outcomes.push({ movilNormalizado: decision.movilNormalizado, estado: "EXCLUIDO_CAMBIO", motivo: reason, procedencias: { version: 1, sources } });
-        else { const selected = candidates[0]!; included.push(selected); outcomes.push({ movilNormalizado: decision.movilNormalizado, estado: "INCLUIDO", motivo: "Revalidado al confirmar", procedencias: { version: 1, sources } }); }
+        else {
+          const selected = candidates[0]!;
+          included.push(selected);
+          transitionReservationIdsByMobile.set(decision.movilNormalizado, activeReservationIds);
+          outcomes.push({ movilNormalizado: decision.movilNormalizado, estado: "INCLUIDO", motivo: activeReservationIds.length ? "Revalidado; transición de reserva pendiente de confirmar lote" : "Revalidado al confirmar", procedencias: { version: 1, sources, activeReservationIds } });
+        }
       }
       await tx.resultadoGeneracionReciclajeGlobal.createMany({ data: outcomes.map((outcome) => ({ ejecucionId: input.executionId, ...outcome })), skipDuplicates: true });
       if (!included.length) { await tx.ejecucionReciclajeGlobal.update({ where: { id: input.executionId }, data: { estado: "EVALUADA" } }); return { baseId: null, reused: false, included: 0, excludedChanged: outcomes.length }; }
       const sourceSummary = included.map((record) => ({ baseId: record.baseId, recordId: record.id, sourceRow: record.numeroFilaOriginal }));
-      const meta = generationMetadata(input.executionId, sourceSummary);
+      const meta = generationMetadata(input.executionId, sourceSummary, new Set([...transitionReservationIdsByMobile.values()].flat()).size);
       const code = await nextBaseCode(tx, execution.fechaEfectiva);
       const base = await tx.base.create({ data: { codigo: code, nombreOriginal: meta.originalFileName, nombreDescriptivo: `Reciclada global · ${execution.fechaEfectiva.toISOString().slice(0, 10)}`, fechaRecepcion: execution.fechaEfectiva, tipo: "RECICLADA", estado: "LISTA_PARA_DISTRIBUIR", cantidadImportados: included.length, cantidadValidos: included.length, cantidadExcluidos: 0, metadatos: meta as unknown as Prisma.InputJsonValue } });
-      await tx.registro.createMany({ data: included.map((record, index) => { const cells = crmCells(record, record.base.metadatos); return { baseId: base.id, numeroFilaOriginal: index + 2, movilNormalizado: record.movilNormalizado, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, operadorOriginal: record.operadorOriginal, fechaPortabilidad: record.fechaPortabilidad, tipificacion: record.tipificacion, datosOriginales: { version: 1, cells, mobile: cells[0] ?? "", contactPhone: cells[1] ?? "", reason: null, enrichedCells: cells, provenance: provenance(record.datosOriginales), globalSource: { baseId: record.baseId, baseCode: record.base.codigo, recordId: record.id, sourceRow: record.numeroFilaOriginal }, sourceOriginal: record.datosOriginales } as Prisma.InputJsonValue }; }) });
+      await tx.registro.createMany({ data: included.map((record, index) => { const cells = crmCells(record, record.base.metadatos); return { baseId: base.id, numeroFilaOriginal: index + 2, movilNormalizado: record.movilNormalizado, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, operadorOriginal: record.operadorOriginal, fechaPortabilidad: record.fechaPortabilidad, tipificacion: record.tipificacion, datosOriginales: { version: 1, cells, mobile: cells[0] ?? "", contactPhone: cells[1] ?? "", reason: null, enrichedCells: cells, provenance: provenance(record.datosOriginales), globalSource: { baseId: record.baseId, baseCode: record.base.codigo, recordId: record.id, sourceRow: record.numeroFilaOriginal }, globalTransition: { executionId: input.executionId, priorReservationIds: transitionReservationIdsByMobile.get(record.movilNormalizado ?? "") ?? [] }, sourceOriginal: record.datosOriginales } as Prisma.InputJsonValue }; }) });
       await tx.ejecucionReciclajeGlobal.update({ where: { id: input.executionId }, data: { baseRecicladaId: base.id, generadoEn: new Date(), estado: "EVALUADA" } });
       await tx.eventoAuditoria.createMany({ data: [{ operacionId: `reciclaje-global:${input.executionId}:base-generada`, accion: "BASE_RECICLADA", usuarioId: input.userId, baseId: base.id, cantidad: included.length, metadatos: { executionId: input.executionId, kind: "GLOBAL", excludedChanged: outcomes.filter((outcome) => outcome.estado === "EXCLUIDO_CAMBIO").length } }], skipDuplicates: true });
       return { baseId: base.id, reused: false, included: included.length, excludedChanged: outcomes.filter((outcome) => outcome.estado === "EXCLUIDO_CAMBIO").length };

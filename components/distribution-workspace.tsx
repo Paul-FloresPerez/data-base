@@ -10,6 +10,7 @@ import type { BatchSummary } from "@/lib/workspace/batch";
 interface DistributionWorkspaceProps {
   commercialDistributionConfirmed: boolean;
   isConfirmingCommercialDistribution: boolean;
+  commercialTransitionStatus: string | null;
   onBack: () => void;
   onConfirmCommercialDistribution: () => void;
   onContinue: () => void;
@@ -19,7 +20,7 @@ interface DistributionWorkspaceProps {
   batch: BatchSummary;
 }
 
-export function DistributionWorkspace({ batch, commercialDistributionConfirmed, isConfirmingCommercialDistribution, onBack, onConfirmCommercialDistribution, onContinue, onSettingsChange, report, settings }: DistributionWorkspaceProps) {
+export function DistributionWorkspace({ batch, commercialDistributionConfirmed, isConfirmingCommercialDistribution, commercialTransitionStatus, onBack, onConfirmCommercialDistribution, onContinue, onSettingsChange, report, settings }: DistributionWorkspaceProps) {
   const plan = useMemo(
     () => buildExportPlan(report, settings.selectedCampaigns, settings.batchSize),
     [report, settings.batchSize, settings.selectedCampaigns],
@@ -103,7 +104,9 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
       <section className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
         <p className="text-sm font-semibold text-slate-900">Confirmación comercial</p>
         <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">La vista previa no reserva móviles. Confirma solo cuando esta distribución vaya a convertirse en una asignación comercial: el servidor volverá a validar ventas, operador, reservas y el máximo de 100 por lote.</p>
+        {batch.globalTransitionReservationCount > 0 ? <p className="mt-2 max-w-3xl text-xs leading-5 text-amber-900">Esta base proviene de Reciclaje Global: hasta {batch.globalTransitionReservationCount} asignación{batch.globalTransitionReservationCount === 1 ? " anterior" : "es anteriores"} podrá cerrarse automáticamente solo si sigue coincidiendo con el snapshot y se confirma este nuevo lote.</p> : null}
         {commercialDistributionConfirmed ? <p role="status" className="mt-3 text-sm font-semibold text-emerald-800">Distribución comercial confirmada y reservada. La configuración queda bloqueada para conservar su trazabilidad.</p> : <button type="button" disabled={plan.totalEligible === 0 || isConfirmingCommercialDistribution} onClick={onConfirmCommercialDistribution} className="mt-3 inline-flex min-h-10 items-center justify-center rounded-md bg-emerald-700 px-3.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300">{isConfirmingCommercialDistribution ? "Confirmando distribución…" : "Confirmar distribución comercial"}</button>}
+        {commercialTransitionStatus ? <p role="status" className="mt-3 text-sm font-semibold text-emerald-800">{commercialTransitionStatus}</p> : null}
       </section>
 
       {plan.totalEligible === 0 ? <p role="status" className="border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">No hay registros elegibles con la selección y filtros actuales. Ajusta Campañas antes de exportar.</p> : null}

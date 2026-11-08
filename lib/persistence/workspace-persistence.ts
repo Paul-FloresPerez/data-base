@@ -57,6 +57,9 @@ export interface StoredMetadata {
   originalBaseId?: string | null;
   originalBaseCode?: string | null;
   recyclingExecutionId?: string | null;
+  /** Immutable Global Recycling execution that may transfer only its snapshotted holds. */
+  globalRecyclingExecutionId?: string | null;
+  globalTransitionReservationCount?: number;
 }
 
 export interface SaveStartPayload {
@@ -179,6 +182,8 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         originalBaseId: batch.originalBaseId,
         originalBaseCode: batch.originalBaseCode,
         recyclingExecutionId: batch.recyclingExecutionId,
+        globalRecyclingExecutionId: batch.globalRecyclingExecutionId,
+        globalTransitionReservationCount: batch.globalTransitionReservationCount,
       },
     },
     records,
@@ -239,6 +244,8 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     receivedAt: base.receivedAt ?? base.metadata.receivedAt ?? null,
     originalBaseId: base.originalBaseId ?? base.metadata.originalBaseId ?? null,
     recyclingExecutionId: base.metadata.recyclingExecutionId ?? null,
+    globalRecyclingExecutionId: base.metadata.globalRecyclingExecutionId ?? null,
+    globalTransitionReservationCount: base.metadata.globalTransitionReservationCount ?? 0,
     createdAt: base.createdAt,
     dataset,
     cleaning: operationalRecords.some((record) => record.tipification !== "PENDIENTE") ? { validRecords, excludedRecords, reasonBreakdown } : null,

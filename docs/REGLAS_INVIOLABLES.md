@@ -33,7 +33,11 @@ operación por el hecho de que exista una pantalla.
 4. Venta confirmada bloquea global y permanentemente. Datos ambiguos quedan en
    revisión y nunca se convierten en venta confirmada por inferencia.
 5. Una reserva comercial ACTIVA bloquea una nueva distribución global del mismo
-   móvil. Su liberación es explícita, autorizada y auditada.
+   móvil. La única excepción es una transición autorizada de Reciclaje Global:
+   el servidor debe comprobar que la reserva coincide con el identificador
+   congelado en el snapshot, cerrarla y crear la nueva reserva dentro de la
+   misma transacción y bajo el mismo lock por móvil. No hay liberaciones
+   masivas, implícitas ni previas a la confirmación del nuevo lote.
 6. Un resultado MOCK no acredita operador real para distribución definitiva;
    EXCEL, CRM, MOCK y API_REAL permanecen diferenciados.
 
@@ -125,6 +129,8 @@ Todo cambio relevante debe añadir o ejecutar controles que prueben:
 - conservación de columnas originales y procedencia;
 - snapshots inmutables de reciclaje y reintentos idempotentes;
 - ventas confirmadas y reservas activas bloqueando reciclaje y distribución;
+- transición de reciclaje: cierre auditado de una reserva capturada y creación
+  atómica de su reemplazo, más rechazo si la reserva cambió tras el snapshot;
 - matriz por operador actual y exclusión de MOCK;
 - lotes de 7, 68, 100 y 145 registros (100 + 45);
 - encabezados CRM exactos y contenido real de XLSX/ZIP;

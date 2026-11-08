@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ bas
     const lots = payload.lots;
     if (!lots.every((lot) => isPlainObject(lot) && (lot.campaign === "YOIGO" || lot.campaign === "VODAFONE") && Number.isInteger(lot.number) && Number(lot.number) > 0 && Array.isArray(lot.sourceRows) && lot.sourceRows.length <= 100 && lot.sourceRows.every(Number.isInteger))) return Response.json({ error: "Lotes no válidos." }, { status: 400 });
     const complete = await completeBaseSave(baseId, String(payload.revision), lots as never, session.user.id);
-    return complete ? Response.json({ ok: true }) : Response.json({ error: "Guardado desactualizado." }, { status: 409 });
+    return complete ? Response.json({ ok: true, createdLots: complete.createdLots, releasedPriorReservations: complete.releasedPriorReservations }) : Response.json({ error: "Guardado desactualizado." }, { status: 409 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo finalizar el guardado." }, { status: 409 });
   }

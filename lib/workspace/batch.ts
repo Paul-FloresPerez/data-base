@@ -33,6 +33,10 @@ export interface WorkingBatch {
   originalBaseId: string | null;
   /** Immutable server execution that selected this recycled base. */
   recyclingExecutionId: string | null;
+  /** Immutable global execution allowed to transfer only snapshotted holds. */
+  globalRecyclingExecutionId: string | null;
+  /** Aggregate only; the server remains authoritative at confirmation time. */
+  globalTransitionReservationCount: number;
   distribution: DistributionSettings;
   enrichmentOutput: EnrichmentOutput | null;
   /** Read-only historical Excel reconciliation; never represents API traffic. */
@@ -65,6 +69,7 @@ export interface BatchSummary {
   id: string;
   kind: BatchKind;
   commercialDistributionConfirmed: boolean;
+  globalTransitionReservationCount: number;
   records: number;
   status: BatchStatus;
 }
@@ -105,6 +110,8 @@ export function createWorkingBatch(
     receivedAt: null,
     originalBaseId: null,
     recyclingExecutionId: null,
+    globalRecyclingExecutionId: null,
+    globalTransitionReservationCount: 0,
     createdAt,
     dataset,
     cleaning: null,
@@ -146,6 +153,7 @@ export function summarizeBatch(batch: WorkingBatch): BatchSummary {
     records: batch.dataset.records.length,
     kind: batch.kind,
     commercialDistributionConfirmed: batch.commercialDistributionConfirmed,
+    globalTransitionReservationCount: batch.globalTransitionReservationCount,
     status: getBatchStatus(batch),
   };
 }

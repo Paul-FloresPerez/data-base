@@ -22,7 +22,7 @@ decision aid, not a replacement for `docs/REGLAS_INVIOLABLES.md`.
 | Approved + implemented | A lot has 1–100 records; definitive download reads confirmed persisted lots and matching active reservations. | `lib/server/base-integrity.ts`, `lib/server/commercial-export-storage.ts`. |
 | Approved + implemented | Confirmed external sales block globally and permanently; ambiguous or CRM-only sale data does not become a confirmed sale. | `lib/server/sales-storage.ts`, `lib/sales/sales-import.ts`, `tests/external-sales.test.ts`. |
 | Approved + implemented | Active reservations are global per normalized mobile, historical, explicitly releasable and audited; archive does not release them. | `lib/server/commercial-reservation-storage.ts`, `app/api/reservas/[reservationId]/liberar/route.ts`, `tests/base-archive-policy.test.ts`. |
-| Gap | The approved business meaning of “assignment closed” needs a documented operational release workflow and authority model beyond the existing individual administrative release endpoint. | Review before bulk/operational release UX. |
+| Implemented | A Global Recycling distribution can replace only the active reservations captured in its immutable snapshot. It closes each prior assignment and creates the replacement in the same locked transaction, preserving both reservations and audit events. Any later or unrelated hold rejects the confirmation. | `lib/server/base-storage.ts`, `lib/server/commercial-reservation-storage.ts`, transition integration runner. |
 
 ## CRM and recycling
 

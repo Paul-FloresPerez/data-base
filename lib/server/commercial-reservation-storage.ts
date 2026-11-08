@@ -75,6 +75,76 @@ export async function createCommercialReservations(
   });
 }
 
+/**
+ * Transfers only holds explicitly captured by an immutable global-recycling
+ * snapshot. It is intentionally transaction-scoped: releasing the previous
+ * assignment and creating the replacement can never commit separately.
+ */
+export async function transitionCommercialReservations(
+  transaction: Transaction,
+  input: {
+    userId: string;
+    executionId: string;
+    operationId: string;
+    replacements: readonly CommercialReservationInput[];
+    priorReservationIdsByMobile: ReadonlyMap<string, readonly string[]>;
+  },
+) {
+  const mobiles = [...new Set(input.replacements.map((reservation) => reservation.mobile))];
+  if (!mobiles.length) return { released: 0 };
+  const active = await transaction.reservaComercial.findMany({
+    where: { movilNormalizado: { in: mobiles }, estado: "ACTIVA" },
+    select: { id: true, movilNormalizado: true, baseId: true, loteId: true, campana: true },
+  });
+  const replacementByMobile = new Map(input.replacements.map((reservation) => [reservation.mobile, reservation]));
+  for (const reservation of active) {
+    const allowed = new Set(input.priorReservationIdsByMobile.get(reservation.movilNormalizado) ?? []);
+    if (!allowed.has(reservation.id)) {
+      throw new Error("Una reserva activa no corresponde al snapshot de reciclaje; crea una nueva evaluación.");
+    }
+  }
+  if (!active.length) return { released: 0 };
+
+  const now = new Date();
+  // A transition can cover several 100-record lots. One parameterized UPDATE
+  // keeps that work within the same transaction without one network round trip
+  // per historical reservation; the state predicate remains the final guard.
+  const released = await transaction.$executeRaw(Prisma.sql`
+    UPDATE "reservas_comerciales" AS reserva
+    SET "estado" = 'LIBERADA',
+        "liberada_en" = ${now},
+        "liberada_por_usuario_id" = ${input.userId}::uuid,
+        "operacion_liberacion_id" = transicion.operacion_id
+    FROM (VALUES ${Prisma.join(active.map((reservation) => Prisma.sql`(${reservation.id}::uuid, ${`recycling-transition:${input.operationId}:${reservation.id}`})`))})
+      AS transicion(id, operacion_id)
+    WHERE reserva."id" = transicion.id AND reserva."estado" = 'ACTIVA'
+  `);
+  if (released !== active.length) throw new Error("No se pudo cerrar una reserva anterior de forma atómica.");
+  await transaction.eventoAuditoria.createMany({
+    data: active.map((reservation) => {
+      const replacement = replacementByMobile.get(reservation.movilNormalizado)!;
+      return {
+        operacionId: `recycling-transition:${input.operationId}:${reservation.id}`,
+        accion: "RESERVA_LIBERADA" as const,
+        usuarioId: input.userId,
+        baseId: reservation.baseId,
+        loteId: reservation.loteId,
+        campana: reservation.campana,
+        cantidad: 1,
+        metadatos: {
+          reason: "TRANSICION_RECICLAJE_AUTORIZADA",
+          executionId: input.executionId,
+          newBaseId: replacement.baseId,
+          newLotId: replacement.loteId,
+          newCampaign: replacement.campaign,
+        },
+      };
+    }),
+    skipDuplicates: true,
+  });
+  return { released: active.length };
+}
+
 /** Releases a hold explicitly; the historical reservation is never deleted. */
 export async function releaseCommercialReservation(input: { id: string; userId: string; operationId: string }) {
   return prisma.$transaction(async (transaction) => {

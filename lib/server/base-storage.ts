@@ -9,7 +9,7 @@ import { linkGeneratedRecycledBase } from "@/lib/server/recycling-storage";
 import { nextBaseCode } from "@/lib/server/base-code";
 import { assertCommercialLotsIntegrity, assertCompletedRecordIntegrity, assertIncomingRecordIntegrity, assertLotsIntegrity } from "@/lib/server/base-integrity";
 import { lockCommercialMobiles } from "@/lib/server/commercial-locks";
-import { createCommercialReservations } from "@/lib/server/commercial-reservation-storage";
+import { createCommercialReservations, transitionCommercialReservations } from "@/lib/server/commercial-reservation-storage";
 import { normalizeOriginalBaseSearch, type OriginalBaseOption } from "@/lib/base-history/original-base-search";
 
 function metadata(value: unknown): StoredMetadata | null {
@@ -23,6 +23,33 @@ function receiptDate(value: string | null): Date | null {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
+
+function transitionReservationIds(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  const transition = (value as { globalTransition?: unknown }).globalTransition;
+  if (!transition || typeof transition !== "object") return [];
+  const ids = (transition as { priorReservationIds?: unknown }).priorReservationIds;
+  return Array.isArray(ids) ? [...new Set(ids.filter((id): id is string => typeof id === "string"))] : [];
+}
+
+/** Preserve the server-created global snapshot evidence when a generated base
+ * is reopened and saved for its later commercial confirmation. It is never
+ * accepted from the browser as a new authorization. */
+function preservedGlobalTransition(value: unknown): Prisma.InputJsonValue | null {
+  if (!value || typeof value !== "object") return null;
+  const transition = (value as { globalTransition?: unknown }).globalTransition;
+  if (!transition || typeof transition !== "object") return null;
+  const executionId = (transition as { executionId?: unknown }).executionId;
+  const priorReservationIds = transitionReservationIds(value);
+  if (typeof executionId !== "string") return null;
+  return { executionId, priorReservationIds } as Prisma.InputJsonValue;
+}
+
+export type CompleteBaseSaveResult = {
+  completed: true;
+  createdLots: number;
+  releasedPriorReservations: number;
+};
 
 /** JSONB does not preserve property insertion order; compare the immutable row
  * payload structurally so re-opening a generated recycled base is not rejected
@@ -63,7 +90,7 @@ export async function beginBaseSave(input: SaveStartPayload) {
     const receivedAt = receiptDate(input.receivedAt);
     await prisma.$transaction(async (transaction) => {
       if (existing) {
-        const generatedRecycledBase = existing.tipo === "RECICLADA" && old?.completed && Boolean(old.recyclingExecutionId);
+        const generatedRecycledBase = existing.tipo === "RECICLADA" && old?.completed && Boolean(old.recyclingExecutionId || old.globalRecyclingExecutionId);
         // Releases before the cleaning guard could complete a newly imported
         // original while it was still LISTA_PARA_LIMPIAR. It is safe to repair
         // only that impossible state: it has no operational record set and is
@@ -78,7 +105,9 @@ export async function beginBaseSave(input: SaveStartPayload) {
         // A completed base is immutable at the source-row level. Upserts in
         // saveRecordChunk enrich those same records without erasing their
         // original JSON columns; only an interrupted incomplete save is reset.
-        if (!old?.completed || recoverableInitialSave || editableOperationalSave) await transaction.registro.deleteMany({ where: { baseId: input.id } });
+        if ((!old?.completed || recoverableInitialSave || editableOperationalSave) && !generatedRecycledBase) {
+          await transaction.registro.deleteMany({ where: { baseId: input.id } });
+        }
       }
       const code = existing?.codigo ?? await nextBaseCode(transaction, receivedAt);
       // An original base is its own root; null avoids a needless self-FK that
@@ -116,8 +145,12 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
       throw new Error("Una fila ya guardada no puede cambiar dentro de la misma revisión.");
     }
   }
+  // A client chunk contains up to 100 records. Neon may need more than the
+  // Prisma default five seconds when reopening a generated global base, so the
+  // complete chunk remains one atomic write with an explicit bounded timeout.
   await prisma.$transaction(records.map((record) => {
     const scalar = enrichmentScalars(record.enrichedCells, baseMetadata.enrichmentColumns ?? []);
+    const preservedTransition = preservedGlobalTransition(existingByRow.get(record.sourceRow));
     const data = {
       movilNormalizado: record.normalizedMobile,
       documento: record.document || null,
@@ -126,15 +159,15 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
       operadorOriginal: scalar.operadorOriginal,
       fechaPortabilidad: scalar.fechaPortabilidad,
       tipificacion: record.tipification,
-      datosOriginales: { version: 1, cells: record.cells, mobile: record.mobile, contactPhone: record.contactPhone, reason: record.reason, enrichedCells: record.enrichedCells, provenance: record.provenance } as Prisma.InputJsonValue,
+      datosOriginales: { version: 1, cells: record.cells, mobile: record.mobile, contactPhone: record.contactPhone, reason: record.reason, enrichedCells: record.enrichedCells, provenance: record.provenance, ...(preservedTransition ? { globalTransition: preservedTransition } : {}) } as Prisma.InputJsonValue,
     };
     return prisma.registro.upsert({ where: { baseId_numeroFilaOriginal: { baseId, numeroFilaOriginal: record.sourceRow } }, create: { baseId, numeroFilaOriginal: record.sourceRow, ...data }, update: data });
-  }));
+  }), { maxWait: 10_000, timeout: 30_000 });
   return true;
 }
 
-export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[], userId: string) {
-  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true, archivadaEn: true } });
+export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[], userId: string): Promise<false | CompleteBaseSaveResult> {
+  const base = await prisma.base.findUnique({ where: { id: baseId }, select: { tipo: true, metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true, archivadaEn: true } });
   const baseMetadata = metadata(base?.metadatos);
   if (!base || !baseMetadata || baseMetadata.revision !== revision) return false;
   if (base.archivadaEn) throw new Error("La base está archivada y no admite distribución ni guardado operativo.");
@@ -193,7 +226,10 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
       return mobile ? [mobile] : [];
     }));
     const byRow = new Map(savedRecords.map((record) => [record.numeroFilaOriginal, record.id]));
-    await prisma.$transaction(async (transaction) => {
+    // A confirmed recycled transition can legitimately close and replace up to
+    // several 100-record lots. Keep the advisory locks and every mutation in
+    // one transaction, but give Neon enough time to persist its audit rows.
+    const result = await prisma.$transaction(async (transaction) => {
       await lockCommercialMobiles(transaction, mobilesToDistribute);
       const sales = await transaction.ventaExterna.findMany({ where: { movilNormalizado: { in: [...new Set(mobilesToDistribute)] }, estado: "CONFIRMADA" }, select: { movilNormalizado: true } });
       if (sales.length) throw new Error("No se puede distribuir un móvil con una venta comercial confirmada.");
@@ -208,6 +244,31 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
           if (!mobile || !recordId) throw new Error("No se pudo identificar el móvil del lote para reservarlo.");
           reservations.push({ baseId, loteId: created.id, campaign: lot.campaign, mobile, operationId: `reservation:${baseId}:${recordId}` });
         }
+      }
+      let releasedPriorReservations = 0;
+      if (baseMetadata.globalRecyclingExecutionId && reservations.length) {
+        if (base.tipo !== "RECICLADA") throw new Error("La transición de reciclaje solo puede aplicarse a una base reciclada.");
+        const execution = await transaction.ejecucionReciclajeGlobal.findFirst({
+          where: { id: baseMetadata.globalRecyclingExecutionId, baseRecicladaId: baseId },
+          select: { id: true },
+        });
+        if (!execution) throw new Error("La transición no corresponde a la ejecución global que generó esta base.");
+        const distributedMobiles = [...new Set(reservations.map((reservation) => reservation.mobile))];
+        const eligible = await transaction.decisionEjecucionReciclajeGlobal.findMany({
+          where: { ejecucionId: execution.id, movilNormalizado: { in: distributedMobiles }, decision: "ELEGIBLE" },
+          select: { movilNormalizado: true },
+        });
+        if (eligible.length !== distributedMobiles.length) throw new Error("Un lote contiene un móvil no autorizado por la ejecución global.");
+        const byMobile = new Map(savedRecords.flatMap((record) => record.movilNormalizado ? [[record.movilNormalizado, transitionReservationIds(record.datosOriginales)] as const] : []));
+        const priorReservationIdsByMobile = new Map(distributedMobiles.map((mobile) => [mobile, byMobile.get(mobile) ?? []]));
+        const transition = await transitionCommercialReservations(transaction, {
+          userId,
+          executionId: execution.id,
+          operationId: `${baseId}:${revision}`,
+          replacements: reservations,
+          priorReservationIdsByMobile,
+        });
+        releasedPriorReservations = transition.released;
       }
       await createCommercialReservations(transaction, { userId, matrixVersion: commercialMatrixSnapshot().version, reservations });
       const historicalImports = baseMetadata.historicalResultImports
@@ -231,9 +292,11 @@ export async function completeBaseSave(baseId: string, revision: string, lots: S
       }
       await transaction.base.update({ where: { id: baseId }, data: { cantidadValidos: validCount, cantidadExcluidos: excludedCount, metadatos: { ...baseMetadata, commercialMatrix: commercialMatrixSnapshot(), commercialDistributionConfirmed: lots.length > 0, completed: true, revision: null } as unknown as Prisma.InputJsonValue } });
       await appendBaseLifecycleEvents(transaction, { baseId, userId, metadata: baseMetadata, imported: base.cantidadImportados, valid: validCount, excluded: excludedCount, lots });
-    });
+      return { completed: true as const, createdLots: lots.length, releasedPriorReservations };
+    }, { maxWait: 10_000, timeout: 30_000 });
+    return result;
   }
-  return true;
+  return { completed: true, createdLots: 0, releasedPriorReservations: 0 };
 }
 
 export async function listSavedBases() {
