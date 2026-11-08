@@ -1,7 +1,8 @@
 import { requireAdminApi } from "@/lib/server/require-admin";
-import { assertFirstRealSozarTestEnabled, getFirstRealSozarTestConfiguration, SozarFirstRealTestBlockedError } from "@/lib/server/sozar-first-real-gate";
+import { fingerprintHlrMobile } from "@/lib/server/sozar-control-plane";
+import { assertFirstRealSozarTestEnabled, getFirstRealSozarAttemptPolicy, getFirstRealSozarTestConfiguration, SozarFirstRealTestBlockedError } from "@/lib/server/sozar-first-real-gate";
 import { executeFirstRealSozarTest } from "@/lib/server/sozar-first-real-executor";
-import { getFirstRealSozarCandidateHints, getFirstRealSozarSelectionContext } from "@/lib/server/sozar-first-real-selection";
+import { getFirstRealSozarCandidateHints, getFirstRealSozarEligibleRecord, getFirstRealSozarSelectionContext } from "@/lib/server/sozar-first-real-selection";
 import { prisma } from "@/lib/server/prisma";
 
 /**
@@ -31,33 +32,74 @@ export async function GET(request: Request) {
   // This validates only the local server configuration. It does not create a
   // reservation, invoke a transport or contact the provider.
   let configurationReady = false;
+  let policy: ReturnType<typeof getFirstRealSozarAttemptPolicy> | null = null;
+  let configuration: ReturnType<typeof getFirstRealSozarTestConfiguration> | null = null;
   try {
     assertFirstRealSozarTestEnabled();
-    getFirstRealSozarTestConfiguration();
+    configuration = getFirstRealSozarTestConfiguration();
+    policy = getFirstRealSozarAttemptPolicy();
     configurationReady = true;
   } catch {
     configurationReady = false;
   }
-  const event = await prisma.eventoConsultaHlr.findUnique({
-    where: { claveOperacion: "sozar:first-real-test:v1" },
-    select: { consulta: { select: { estado: true, resultado: { select: { resultado: true, consultadoEn: true } } } } },
+  const attempts = await prisma.consultaHlr.findMany({
+    where: { proveedor: "sozar" },
+    orderBy: { creadoEn: "desc" },
+    select: {
+      id: true,
+      estado: true,
+      creadoEn: true,
+      actualizadoEn: true,
+      resultado: { select: { resultado: true, consultadoEn: true } },
+      eventos: { orderBy: { creadoEn: "desc" }, take: 8, select: { tipo: true, metadatos: true, creadoEn: true } },
+    },
   });
   const url = new URL(request.url);
   const baseId = url.searchParams.get("baseId");
   const sourceRowRaw = url.searchParams.get("sourceRow");
   let candidates: Awaited<ReturnType<typeof getFirstRealSozarCandidateHints>> | undefined;
   let selection: Awaited<ReturnType<typeof getFirstRealSozarSelectionContext>> | undefined;
+  let selectedStatus = "SIN_PRUEBA_REAL";
   if (baseId) {
     try {
       candidates = await getFirstRealSozarCandidateHints(baseId);
       if (sourceRowRaw !== null && /^\d+$/.test(sourceRowRaw)) {
         selection = await getFirstRealSozarSelectionContext(baseId, Number(sourceRowRaw));
+        if (configuration) {
+          const record = await getFirstRealSozarEligibleRecord(baseId, Number(sourceRowRaw));
+          const fingerprint = fingerprintHlrMobile(record.movilNormalizado, configuration.mobileFingerprintKey);
+          selectedStatus = (await prisma.consultaHlr.findFirst({ where: { proveedor: "sozar", huellaMovil: fingerprint }, select: { estado: true } }))?.estado ?? selectedStatus;
+        }
       }
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : "No se pudo revisar la selección de Sozar.", configurationReady }, { status: 409 });
     }
   }
-  if (!event?.consulta) return Response.json({ status: "SIN_PRUEBA_REAL", configurationReady, candidates, selection });
-  const stored = event.consulta.resultado?.resultado as { shape?: unknown; mapping?: unknown } | undefined;
-  return Response.json({ status: event.consulta.estado, configurationReady, consultedAt: event.consulta.resultado?.consultadoEn?.toISOString() ?? null, shape: stored?.shape ?? null, mapping: stored?.mapping ?? null, candidates, selection });
+  const safeAttempts = attempts.map((attempt) => ({
+    attemptId: attempt.id,
+    status: attempt.estado,
+    createdAt: attempt.creadoEn.toISOString(),
+    updatedAt: attempt.actualizadoEn.toISOString(),
+    consultedAt: attempt.resultado?.consultadoEn?.toISOString() ?? null,
+    shape: (attempt.resultado?.resultado as { shape?: unknown } | undefined)?.shape ?? null,
+    events: attempt.eventos.map((event) => {
+      const metadata = event.metadatos as Record<string, unknown>;
+      return {
+        type: event.tipo,
+        createdAt: event.creadoEn.toISOString(),
+        phase: typeof metadata.phase === "string" ? metadata.phase : null,
+        code: typeof metadata.code === "string" ? metadata.code : null,
+        httpStatus: typeof metadata.httpStatus === "number" ? metadata.httpStatus : null,
+        resolution: typeof metadata.resolution === "string" ? metadata.resolution : null,
+      };
+    }),
+  }));
+  return Response.json({
+    status: selectedStatus,
+    configurationReady,
+    policy: policy ? { maxAttempts: policy.maxAttempts, attemptsUsed: attempts.length, remainingAttempts: Math.max(0, policy.maxAttempts - attempts.length) } : null,
+    attempts: safeAttempts,
+    candidates,
+    selection,
+  });
 }

@@ -105,6 +105,12 @@ requieren parametrización futura, evidencia auditada y pruebas de regresión.
    registros, gestiones, lotes, ventas ni reservas, y no libera reservas. Una
    base archivada queda fuera de nuevos trabajos operativos, conciliación y
    reciclaje global hasta su restauración administrativa explícita.
+6. Una consulta real de Sozar conserva un intento inmutable y auditado. Un
+   fallo previo al envío puede cerrarse como FALLIDA con evidencia; si no hay
+   prueba suficiente del resultado externo queda INCIERTA, sin reintento
+   automático ni liberación implícita. Una nueva consulta exige una política
+   explícita de límite y presupuesto, autorización administrativa separada y
+   un móvil distinto mientras subsista una incertidumbre sobre el mismo móvil.
 
 ## Controles de regresión requeridos
 

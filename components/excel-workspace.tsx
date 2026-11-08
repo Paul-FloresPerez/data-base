@@ -278,12 +278,12 @@ export function ExcelWorkspace() {
     }
     void fetch(`/api/sozar/first-real?${query.toString()}`, { signal: controller.signal })
       .then(async (response) => {
-        const payload = await response.json().catch(() => null) as { configurationReady?: boolean; status?: string; error?: string; candidates?: { sourceRow: number; hasCrmHistory: boolean }[]; selection?: typeof singleHlrComparison } | null;
+        const payload = await response.json().catch(() => null) as { configurationReady?: boolean; status?: string; error?: string; policy?: { remainingAttempts?: number }; candidates?: { sourceRow: number; hasCrmHistory: boolean }[]; selection?: typeof singleHlrComparison } | null;
         return response.ok ? payload : { ...payload, configurationReady: false, error: payload?.error ?? "No se pudo comprobar que la base está lista para la prueba única." };
       })
       .then((payload) => {
         setIsSingleHlrTestServerReady(payload?.configurationReady === true);
-        setSingleHlrTestServerIssue(payload?.error ?? null);
+        setSingleHlrTestServerIssue(payload?.error ?? (payload?.policy?.remainingAttempts === 0 ? "Se alcanzó el límite configurado de consultas reales; una nueva autorización debe ampliar el cupo y presupuesto en servidor." : null));
         setSingleHlrTestGlobalStatus(payload?.status ?? null);
         setSingleHlrCandidateRowsWithCrm(new Set((payload?.candidates ?? []).filter((candidate) => candidate.hasCrmHistory).map((candidate) => candidate.sourceRow)));
         setSingleHlrComparison(payload?.selection ?? null);

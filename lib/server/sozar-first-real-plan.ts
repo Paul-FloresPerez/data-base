@@ -15,13 +15,13 @@ export function planFirstRealSozarTest(input: {
   baseId: string;
   mobile: string;
   mobileFingerprintKey: string;
-  globalOperationAlreadyRecorded: boolean;
+  attemptLimitReached: boolean;
   hasReusableRealResult: boolean;
   existingConsultationState: FirstRealTestExistingState;
 }): FirstRealTestPlan {
-  if (input.globalOperationAlreadyRecorded) return { status: "BLOQUEADO", reason: "LIMITE_GLOBAL" };
   if (input.hasReusableRealResult) return { status: "BLOQUEADO", reason: "RESULTADO_REUTILIZABLE" };
   if (input.existingConsultationState) return { status: "BLOQUEADO", reason: "COLA_EXISTENTE" };
+  if (input.attemptLimitReached) return { status: "BLOQUEADO", reason: "LIMITE_GLOBAL" };
   const mobile = validateSpanishMobileForSozar(input.mobile);
   const mobileFingerprint = fingerprintHlrMobile(mobile, input.mobileFingerprintKey);
   return {

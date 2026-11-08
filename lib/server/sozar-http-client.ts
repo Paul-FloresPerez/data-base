@@ -67,6 +67,20 @@ export class SozarExecutionBlockedError extends Error {
 }
 
 export class SozarConfigurationError extends Error {}
+export class SozarProviderHttpError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Sozar respondió con estado ${status}.`);
+    this.status = status;
+  }
+}
+export class SozarInvalidJsonError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super("Sozar respondió JSON no válido.");
+    this.status = status;
+  }
+}
 export class SozarContractPendingError extends Error {
   constructor() {
     super("La respuesta de Sozar no puede procesarse hasta disponer de un contrato JSON documentado.");
@@ -150,8 +164,12 @@ export class SozarHttpClient {
     const timeout = setTimeout(() => controller.abort(), this.configuration.timeoutMs);
     try {
       const response = await this.transport(request.url, { ...request.init, signal: controller.signal });
-      if (!response.ok) throw new Error(`Sozar respondió con estado ${response.status}.`);
-      return response.json();
+      if (!response.ok) throw new SozarProviderHttpError(response.status);
+      try {
+        return await response.json();
+      } catch {
+        throw new SozarInvalidJsonError(response.status);
+      }
     } finally {
       clearTimeout(timeout);
     }
