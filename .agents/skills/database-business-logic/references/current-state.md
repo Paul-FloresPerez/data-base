@@ -21,16 +21,18 @@ decision aid, not a replacement for `docs/REGLAS_INVIOLABLES.md`.
 | Approved + implemented | Matrix `2026-11-01.v1`: Vodafone accepts Euskaltel, MasMovil, Orange, Pepephone, R_Cable, Yoigo; Yoigo accepts Finetwork, Movistar, Vodafone, Lowi. It uses trustworthy current operator only. | `lib/campaigns/campaign-engine.ts`, `tests/excel-processing.test.ts`. |
 | Approved + implemented | A lot has 1–100 records; definitive download reads confirmed persisted lots and matching active reservations. | `lib/server/base-integrity.ts`, `lib/server/commercial-export-storage.ts`. |
 | Approved + implemented | Confirmed external sales block globally and permanently; ambiguous or CRM-only sale data does not become a confirmed sale. | `lib/server/sales-storage.ts`, `lib/sales/sales-import.ts`, `tests/external-sales.test.ts`. |
-| Approved + implemented | Active reservations are global per normalized mobile, historical, explicitly releasable and audited; archive does not release them. | `lib/server/commercial-reservation-storage.ts`, `app/api/reservas/[reservationId]/liberar/route.ts`, `tests/base-archive-policy.test.ts`. |
-| Implemented | A Global Recycling distribution can replace only the active reservations captured in its immutable snapshot. It closes each prior assignment and creates the replacement in the same locked transaction, preserving both reservations and audit events. Any later or unrelated hold rejects the confirmation. | `lib/server/base-storage.ts`, `lib/server/commercial-reservation-storage.ts`, transition integration runner. |
+| Approved + implemented | Active reservations are global per normalized mobile, historical and audited; archive does not release them. They prevent simultaneous assignments, not a future authorized recycling cycle. | `lib/server/commercial-reservation-storage.ts`, `app/api/reservas/[reservationId]/liberar/route.ts`, `tests/base-archive-policy.test.ts`. |
+| Approved + implemented (Phase 3) | A Global Recycling distribution can replace only the active reservation IDs captured in its immutable snapshot. Under deterministic PostgreSQL mobile locks, final confirmation rechecks sales and the snapshot, closes each captured prior assignment, creates the replacement lots/reservations and records `TRANSICION_RECICLAJE_AUTORIZADA` in one transaction. Later or unrelated holds reject without partial state; repeated confirmation is idempotent. | `lib/server/commercial-locks.ts`, `lib/server/base-storage.ts`, `lib/server/commercial-reservation-storage.ts`, `scripts/exercise-recycling-commercial-transition.ts`, `tests/recycling-commercial-transition.test.ts`. |
+| Approved + implemented | A mobile appears once per confirmed cycle, but may be reused in a later recycled cycle only after current mandatory controls pass. Confirmation—not preview or generated-base creation—is the point at which the prior captured assignment transitions. | `lib/server/global-recycling-storage.ts`, `lib/server/base-storage.ts`, `components/distribution-workspace.tsx`. |
 
 ## CRM and recycling
 
 | Classification | Rule or behavior | Evidence |
 |---|---|---|
 | Approved + implemented | CRM managements are append-only; canonical files can have multiple sources and global recycling consolidates one logical mobile with provenance. | `lib/server/canonical-crm-storage.ts`, `lib/server/global-crm-conciliation-storage.ts`, global recycling tests. |
-| Approved + implemented | Four completed calendar months, historical minimum 2019-02-01, confirmed sales, active reservations, opposition and material conflicts are conservative gates. | `lib/recycling/intelligent-recycling.ts`, `lib/server/global-recycling-storage.ts`. |
+| Approved + implemented | Four completed calendar months, historical minimum 2019-02-01, confirmed sales, opposition and material conflicts are conservative gates. An active reservation remains a conflict unless its ID was frozen in the Global Recycling snapshot, in which case it is revalidated and transferred only on confirmed replacement distribution. | `lib/recycling/intelligent-recycling.ts`, `lib/server/global-recycling-storage.ts`, `lib/server/base-storage.ts`. |
 | Approved + implemented | In Global Recycling, historical AGENDADO/INTERESADO remain provenance but do not independently veto a mobile that has another selected candidate management. Mandatory commercial protections still prevail. | `lib/server/global-recycling-storage.ts`, `docs/REGLAS_INVIOLABLES.md` § Tipificaciones. |
+| Approved + implemented | The administrator chooses when to run each Global Recycling evaluation and which typifications to include. No fixed interval is inferred; each immutable execution retains its criteria and sources. | `lib/server/global-recycling-storage.ts`, `components/recycling-workspace.tsx`, `docs/REGLAS_INVIOLABLES.md` § Reciclaje y elegibilidad. |
 | Undecided | The lifecycle/caducity of AGENDADO/INTERESADO and future typification mappings remain undefined; no automatic expiry is inferred. | Rules § Tipificaciones. |
 | Implemented | Eligible recycled output projects exactly 24 CRM headers as text; absent values remain empty. | `lib/export/crm-recycling-export.ts`, `tests/crm-recycling-export.test.ts`. |
 
@@ -67,6 +69,9 @@ decision aid, not a replacement for `docs/REGLAS_INVIOLABLES.md`.
    implement it server-side without excluding legitimate foreign documents.
 2. Define resolution/aging semantics for AGENDADO and INTERESADO so historical
    records do not remain in review indefinitely by accidental implementation.
-3. Define operational authorization and evidence requirements for controlled
-   multi-reservation release; retain individual release and all sales blocks
-   until then.
+3. Define operational authorization and evidence requirements only if a
+   manual bulk-release workflow is requested. It is not needed for a valid
+   Phase 3 recycled transition: that server-only transition closes captured
+   reservations atomically on new-lot confirmation. Retain the individual
+   release route and all sales/no-contact protections until a separate policy
+   is approved.
