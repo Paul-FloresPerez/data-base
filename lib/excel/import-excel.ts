@@ -11,6 +11,8 @@ const inputFieldAliases = {
   movil: ["telefonomovil", "movil", "celular", "nums", "numeroemitido"],
   documento: ["numerodoc", "documento", "dni", "nie"],
   nombre: ["nombres", "nombre"],
+  apellido_paterno: ["apellidopaterno", "primerapellido", "apellido1"],
+  apellido_materno: ["apellidomaterno", "segundoapellido", "apellido2"],
   telefono_contacto: ["telefonocontacto"],
 } as const;
 
@@ -87,6 +89,8 @@ export function detectColumnMapping(headers: string[]): ColumnMapping {
     movil: mapping.movil,
     documento: mapping.documento,
     nombre: mapping.nombre,
+    apellido_paterno: mapping.apellido_paterno,
+    apellido_materno: mapping.apellido_materno,
     telefono_contacto: mapping.telefono_contacto,
     enriched,
   };

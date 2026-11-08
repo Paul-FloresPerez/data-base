@@ -3,7 +3,15 @@ export type ExclusionReason =
   | "telefono_fijo"
   | "telefono_invalido"
   | "nombre_vacio"
-  | "telefono_duplicado";
+  | "telefono_duplicado"
+  | "documento_ausente"
+  | "documento_dni_invalido"
+  | "documento_nie_invalido"
+  | "documento_no_verificable"
+  | "nombre_incompleto"
+  | "nombre_invalido"
+  | "apellidos_incompletos"
+  | "apellidos_invalidos";
 
 export const enrichedFieldOrder = [
   "operador_actual",
@@ -31,6 +39,8 @@ export interface ColumnMapping {
   movil: number;
   documento?: number;
   nombre?: number;
+  apellido_paterno?: number;
+  apellido_materno?: number;
   telefono_contacto?: number;
   enriched: Partial<Record<EnrichedField, number>>;
 }
@@ -95,4 +105,12 @@ export const exclusionReasonLabels: Record<ExclusionReason, string> = {
   telefono_invalido: "Móvil inválido",
   nombre_vacio: "Nombre vacío o NULL",
   telefono_duplicado: "Número duplicado",
+  documento_ausente: "Documento de identidad ausente",
+  documento_dni_invalido: "DNI inválido",
+  documento_nie_invalido: "NIE inválido",
+  documento_no_verificable: "Documento no verificable según la política vigente",
+  nombre_incompleto: "Nombre obligatorio ausente",
+  nombre_invalido: "Nombre con formato no válido",
+  apellidos_incompletos: "Apellidos obligatorios ausentes",
+  apellidos_invalidos: "Apellidos con formato no válido",
 };

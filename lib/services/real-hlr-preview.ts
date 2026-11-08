@@ -1,8 +1,12 @@
-import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel/types.ts";
+import { identityExclusionReason } from "../excel/cleaning.ts";
+import type { CleaningResult, EnrichmentOutput, ExclusionReason, ImportedDataset, ValidRecord } from "../excel/types.ts";
 import type { RecordProvenance } from "../workspace/batch.ts";
 
 export interface RealHlrPreview {
   validRecords: number;
+  eligibleForSozar: number;
+  identityExcluded: number;
+  identityExclusionsByReason: Partial<Record<ExclusionReason, number>>;
   uniqueMobiles: number;
   fixedExcluded: number;
   invalidExcluded: number;
@@ -10,6 +14,25 @@ export interface RealHlrPreview {
   enrichedByRealApi: number;
   enrichedFromExistingData: number;
   pendingQueries: number;
+}
+
+/**
+ * Identity validation deliberately happens at the enrichment boundary, not
+ * while preserving the imported source. This keeps incomplete source rows in
+ * the historical base while preventing them from entering a provider queue.
+ */
+export function getSozarIdentityEligibleRecords(cleaning: CleaningResult, dataset: ImportedDataset): {
+  records: ValidRecord[];
+  exclusionsByReason: Partial<Record<ExclusionReason, number>>;
+} {
+  const exclusionsByReason: Partial<Record<ExclusionReason, number>> = {};
+  const records = cleaning.validRecords.filter((record) => {
+    const reason = identityExclusionReason(record, dataset.columnMapping);
+    if (!reason) return true;
+    exclusionsByReason[reason] = (exclusionsByReason[reason] ?? 0) + 1;
+    return false;
+  });
+  return { records, exclusionsByReason };
 }
 
 interface ExistingOutputLookup {
@@ -46,8 +69,9 @@ export function getRealHlrPreview(
   output?: EnrichmentOutput | null,
 ): RealHlrPreview {
   const existingOutput = outputLookup(output);
+  const identity = getSozarIdentityEligibleRecords(cleaning, dataset);
   const byMobile = new Map<string, { real: boolean; existing: boolean }>();
-  for (const record of cleaning.validRecords) {
+  for (const record of identity.records) {
     const current = byMobile.get(record.normalizedMobile) ?? { real: false, existing: false };
     current.real ||= provenanceBySourceRow[record.sourceRow] === "API_REAL";
     current.existing ||= hasExistingOperators(record, dataset, existingOutput);
@@ -63,6 +87,9 @@ export function getRealHlrPreview(
   }
   return {
     validRecords: cleaning.validRecords.length,
+    eligibleForSozar: identity.records.length,
+    identityExcluded: cleaning.validRecords.length - identity.records.length,
+    identityExclusionsByReason: identity.exclusionsByReason,
     uniqueMobiles: byMobile.size,
     fixedExcluded: cleaning.reasonBreakdown.telefono_fijo,
     invalidExcluded: cleaning.reasonBreakdown.telefono_vacio + cleaning.reasonBreakdown.telefono_invalido,
@@ -80,7 +107,7 @@ export function getPendingRealHlrRecords(
   output?: EnrichmentOutput | null,
 ) {
   const existingOutput = outputLookup(output);
-  return cleaning.validRecords.filter((record) =>
+  return getSozarIdentityEligibleRecords(cleaning, dataset).records.filter((record) =>
     provenanceBySourceRow[record.sourceRow] !== "API_REAL" && !hasExistingOperators(record, dataset, existingOutput),
   );
 }
@@ -92,9 +119,10 @@ export function getPendingRealHlrRecords(
  */
 export function getFirstRealSozarTestCandidates(
   cleaning: CleaningResult,
+  dataset: ImportedDataset,
   provenanceBySourceRow: Record<number, RecordProvenance>,
 ) {
-  return cleaning.validRecords.filter((record) =>
+  return getSozarIdentityEligibleRecords(cleaning, dataset).records.filter((record) =>
     provenanceBySourceRow[record.sourceRow] !== "API_REAL",
   );
 }

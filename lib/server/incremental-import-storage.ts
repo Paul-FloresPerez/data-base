@@ -4,7 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { assertIncomingRecordIntegrity } from "@/lib/server/base-integrity";
 import { claimProcessingBlock, completeProcessingBlock, getProcessingJob, ProcessingJobError } from "@/lib/server/processing-jobs-storage";
 import { detectColumnMapping } from "@/lib/excel/import-excel";
-import { normalizeSpanishMobile, spanishMobileExclusionReason, isNullLikeName } from "@/lib/excel/cleaning";
+import { isNullLikeName, normalizeSpanishMobile, spanishMobileExclusionReason } from "@/lib/excel/cleaning";
 import type { ColumnMapping, ExclusionReason } from "@/lib/excel/types";
 import type { StoredMetadata, StoredRecord, StoredTipification } from "@/lib/persistence/workspace-persistence";
 import { prisma } from "@/lib/server/prisma";

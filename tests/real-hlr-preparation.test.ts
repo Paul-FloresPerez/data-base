@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { getFirstRealSozarTestCandidates, getRealHlrPreview } from "../lib/services/real-hlr-preview.ts";
+import { getFirstRealSozarTestCandidates, getRealHlrPreview, getSozarIdentityEligibleRecords } from "../lib/services/real-hlr-preview.ts";
 import { prepareDisabledRealHlrQueue } from "../lib/services/real-hlr-queue-plan.ts";
 import { TestHlrProvider } from "../lib/services/test-hlr-provider.ts";
 import { RealHlrProviderDisabledError, SozarHlrProvider, isSozarHlrExecutionEnabled, mapDocumentedSozarResponse } from "../lib/server/sozar-hlr-provider.ts";
 import { restoreBatch, serializeBatch } from "../lib/persistence/workspace-persistence.ts";
 import { createWorkingBatch } from "../lib/workspace/batch.ts";
 import { indexHlrResultsByNormalizedMobile, linkHlrResultToRecord } from "../lib/services/hlr-result-linkage.ts";
-import { cleanDataset, normalizeSpanishMobile } from "../lib/excel/cleaning.ts";
+import { cleanDataset, documentIdentityReason, normalizeSpanishMobile } from "../lib/excel/cleaning.ts";
 import { InvalidSpanishMobileForHlrError, validateSpanishMobileForSozar } from "../lib/server/sozar-hlr-provider.ts";
 import {
   buildSozarRequest,
@@ -29,11 +29,11 @@ const sozarConfiguration: SozarHttpConfiguration = {
 };
 
 const records = [
-  { sourceRow: 2, cells: ["612345678", "Ana", "", ""], mobile: "612345678", document: "", name: "Ana", contactPhone: "", normalizedMobile: "612345678" },
-  { sourceRow: 3, cells: ["712345678", "Bea", "Operador A", "Operador B"], mobile: "712345678", document: "", name: "Bea", contactPhone: "", normalizedMobile: "712345678" },
+  { sourceRow: 2, cells: ["612345678", "12345678Z", "Ana", "", ""], mobile: "612345678", document: "12345678Z", name: "Ana", contactPhone: "", normalizedMobile: "612345678" },
+  { sourceRow: 3, cells: ["712345678", "X1234567L", "Bea", "Operador A", "Operador B"], mobile: "712345678", document: "X1234567L", name: "Bea", contactPhone: "", normalizedMobile: "712345678" },
 ];
-const dataset = { fileName: "prueba.xlsx", columns: ["Móvil", "Nombre", "Operador Actual", "Operador Original"], columnMapping: { movil: 0, nombre: 1, enriched: { operador_actual: 2, operador_origen: 3 } }, records: records.map(({ normalizedMobile, ...record }) => { void normalizedMobile; return record; }) };
-const cleaning = { validRecords: records, excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 } };
+const dataset = { fileName: "prueba.xlsx", columns: ["Móvil", "DNI", "Nombre", "Operador Actual", "Operador Original"], columnMapping: { movil: 0, documento: 1, nombre: 2, enriched: { operador_actual: 3, operador_origen: 4 } }, records: records.map(({ normalizedMobile, ...record }) => { void normalizedMobile; return record; }) };
+const cleaning = { validRecords: records, excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0, documento_ausente: 0, documento_dni_invalido: 0, documento_nie_invalido: 0, documento_no_verificable: 0, nombre_incompleto: 0, nombre_invalido: 0, apellidos_incompletos: 0, apellidos_invalidos: 0 } };
 
 test("el proveedor real está bloqueado antes de cualquier transporte", async () => {
   assert.equal(isSozarHlrExecutionEnabled, false);
@@ -116,7 +116,7 @@ test("la limpieza usa solo la columna móvil y separa fijos, inválidos y duplic
     ],
   });
   assert.deepEqual(result.validRecords.map((record) => record.normalizedMobile), ["612345678", "712345678"]);
-  assert.deepEqual(result.reasonBreakdown, { telefono_vacio: 1, telefono_fijo: 2, telefono_invalido: 1, nombre_vacio: 0, telefono_duplicado: 1 });
+  assert.deepEqual(result.reasonBreakdown, { telefono_vacio: 1, telefono_fijo: 2, telefono_invalido: 1, nombre_vacio: 0, telefono_duplicado: 1, documento_ausente: 0, documento_dni_invalido: 0, documento_nie_invalido: 0, documento_no_verificable: 0, nombre_incompleto: 0, nombre_invalido: 0, apellidos_incompletos: 0, apellidos_invalidos: 0 });
 });
 
 test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () => {
@@ -129,12 +129,64 @@ test("el proveedor de prueba usa el mismo contrato sin acceso de red", async () 
 
 test("la previsualización separa datos reales, existentes y pendientes", () => {
   const preview = getRealHlrPreview(cleaning, dataset, { 2: "EXCEL", 3: "API_REAL" });
-  assert.deepEqual(preview, { validRecords: 2, uniqueMobiles: 2, fixedExcluded: 0, invalidExcluded: 0, duplicateExcluded: 0, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
+  assert.deepEqual(preview, { validRecords: 2, eligibleForSozar: 2, identityExcluded: 0, identityExclusionsByReason: {}, uniqueMobiles: 2, fixedExcluded: 0, invalidExcluded: 0, duplicateExcluded: 0, enrichedByRealApi: 1, enrichedFromExistingData: 0, pendingQueries: 1 });
 });
 
 test("la prueba única puede seleccionar un móvil MOCK, pero no uno ya API_REAL", () => {
-  const candidates = getFirstRealSozarTestCandidates(cleaning, { 2: "MOCK", 3: "API_REAL" });
+  const candidates = getFirstRealSozarTestCandidates(cleaning, dataset, { 2: "MOCK", 3: "API_REAL" });
   assert.deepEqual(candidates.map((record) => record.normalizedMobile), ["612345678"]);
+});
+
+test("la cola Sozar excluye identidad no verificable y conserva los motivos", () => {
+  const identityDataset = {
+    ...dataset,
+    columns: ["Móvil", "DNI", "Nombre", "Apellido paterno", "Apellido materno"],
+    columnMapping: { movil: 0, documento: 1, nombre: 2, apellido_paterno: 3, apellido_materno: 4, enriched: {} },
+  };
+  const identityCleaning = {
+    ...cleaning,
+    validRecords: [
+      { ...records[0]!, cells: ["612345678", "12345678Z", "Ángela María", "Peña", "Nuñez"] },
+      { ...records[1]!, sourceRow: 4, cells: ["712345678", "12345678A", "Bea", "López", "Ruiz"], document: "12345678A" },
+      { ...records[1]!, sourceRow: 5, cells: ["712345679", "X1234567L", "Bea", "", "Ruiz"], mobile: "712345679", normalizedMobile: "712345679", document: "X1234567L" },
+      { ...records[1]!, sourceRow: 6, cells: ["712345680", "AB123", "Bea", "López", "Ruiz"], mobile: "712345680", normalizedMobile: "712345680", document: "AB123" },
+      { ...records[1]!, sourceRow: 7, cells: ["712345681", "12345678Z", "", "López", "Ruiz"], mobile: "712345681", normalizedMobile: "712345681", document: "12345678Z", name: "" },
+    ],
+  };
+  assert.equal(documentIdentityReason("12345678Z"), null);
+  assert.equal(documentIdentityReason("X1234567L"), null);
+  assert.equal(documentIdentityReason("12345678A"), "documento_dni_invalido");
+  const eligible = getSozarIdentityEligibleRecords(identityCleaning, identityDataset);
+  assert.deepEqual(eligible.records.map((record) => record.normalizedMobile), ["612345678"]);
+  assert.deepEqual(eligible.exclusionsByReason, { documento_dni_invalido: 1, apellidos_incompletos: 1, documento_no_verificable: 1, nombre_incompleto: 1 });
+  assert.deepEqual(getFirstRealSozarTestCandidates(identityCleaning, identityDataset, {} as never).map((record) => record.normalizedMobile), ["612345678"]);
+});
+
+test("la validación previa a Sozar conserva el rendimiento y excluye incidencias en diez mil filas", () => {
+  const letters = "TRWAGMYFPDXBNJZSQVHLCKE";
+  const rows = Array.from({ length: 10_000 }, (_, index) => {
+    const documentNumber = String(index).padStart(8, "0");
+    const document = `${documentNumber}${letters[index % 23]}`;
+    const mobile = `6${String(index).padStart(8, "0")}`;
+    return {
+      sourceRow: index + 2,
+      cells: [mobile, document, "Nombre Sintético", "García", "Peña"],
+      mobile,
+      document,
+      name: "Nombre Sintético",
+      contactPhone: "",
+      normalizedMobile: mobile,
+    };
+  });
+  rows[9995] = { ...rows[9995]!, document: "12345678A", cells: [rows[9995]!.mobile, "12345678A", rows[9995]!.name, "García", "Peña"] };
+  rows[9996] = { ...rows[9996]!, document: "", cells: [rows[9996]!.mobile, "", rows[9996]!.name, "García", "Peña"] };
+  rows[9997] = { ...rows[9997]!, document: "P12345", cells: [rows[9997]!.mobile, "P12345", rows[9997]!.name, "García", "Peña"] };
+  rows[9998] = { ...rows[9998]!, cells: [rows[9998]!.mobile, rows[9998]!.document, rows[9998]!.name, "", "Peña"] };
+  rows[9999] = { ...rows[9999]!, cells: [rows[9999]!.mobile, rows[9999]!.document, "1234", "García", "Peña"], name: "1234" };
+  const dataset10k = { fileName: "identidades.xlsx", columns: ["Teléfono Movil", "Numero Doc", "Nombres", "Apellido paterno", "Apellido materno"], columnMapping: { movil: 0, documento: 1, nombre: 2, apellido_paterno: 3, apellido_materno: 4, enriched: {} }, records: rows.map(({ normalizedMobile, ...record }) => { void normalizedMobile; return record; }) };
+  const eligible = getSozarIdentityEligibleRecords({ ...cleaning, validRecords: rows }, dataset10k);
+  assert.equal(eligible.records.length, 9_995);
+  assert.deepEqual(eligible.exclusionsByReason, { documento_dni_invalido: 1, documento_ausente: 1, documento_no_verificable: 1, apellidos_incompletos: 1, nombre_invalido: 1 });
 });
 
 test("la cola bloqueada es idempotente y se identifica por móvil normalizado", () => {

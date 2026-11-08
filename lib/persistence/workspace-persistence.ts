@@ -78,7 +78,7 @@ export interface SavedLot {
   sourceRows: number[];
 }
 
-const exclusionToTipification: Record<ExclusionReason, StoredTipification> = {
+const exclusionToTipification: Partial<Record<ExclusionReason, StoredTipification>> = {
   telefono_vacio: "TELEFONO_VACIO",
   telefono_fijo: "TELEFONO_FIJO",
   telefono_invalido: "TELEFONO_INVALIDO",
@@ -109,6 +109,8 @@ function toStoredRecords(batch: WorkingBatch): StoredRecord[] {
   return records.map((record) => {
     const reason = excluded.get(record.sourceRow) ?? null;
     const normalizedMobile = valid.get(record.sourceRow) ?? null;
+    const tipification = reason ? exclusionToTipification[reason] : normalizedMobile ? "VALIDO" : "PENDIENTE";
+    if (!tipification) throw new Error("La incidencia de identidad solo puede excluirse antes de preparar la cola de Sozar.");
     return {
       sourceRow: record.sourceRow,
       cells: [...record.cells],
@@ -118,7 +120,7 @@ function toStoredRecords(batch: WorkingBatch): StoredRecord[] {
       contactPhone: record.contactPhone,
       normalizedMobile,
       reason,
-      tipification: reason ? exclusionToTipification[reason] : normalizedMobile ? "VALIDO" : "PENDIENTE",
+      tipification,
       enrichedCells: enriched.get(record.sourceRow) ? [...enriched.get(record.sourceRow)!] : null,
       provenance: batch.provenanceBySourceRow[record.sourceRow] ?? "EXCEL",
     };
@@ -224,7 +226,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     const reason = record.reason ?? tipificationToExclusion[record.tipification];
     return reason ? [{ sourceRow: record.sourceRow, cells: record.cells, mobile: record.mobile, document: record.document, name: record.name, contactPhone: record.contactPhone, reason }] : [];
   });
-  const reasonBreakdown: CleaningResult["reasonBreakdown"] = { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 };
+  const reasonBreakdown: CleaningResult["reasonBreakdown"] = { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0, documento_ausente: 0, documento_dni_invalido: 0, documento_nie_invalido: 0, documento_no_verificable: 0, nombre_incompleto: 0, nombre_invalido: 0, apellidos_incompletos: 0, apellidos_invalidos: 0 };
   for (const record of excludedRecords) reasonBreakdown[record.reason] += 1;
   const filters = { ...base.metadata.campaignFilters, asOfDate: base.metadata.campaignFilters.asOfDate ? new Date(base.metadata.campaignFilters.asOfDate) : undefined };
   return {

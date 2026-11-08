@@ -29,7 +29,7 @@ export function recyclingBatchFromOriginal(input: {
   batch.cleaning = {
     validRecords: records.map((record) => ({ ...record, normalizedMobile: record.mobile } as ValidRecord)),
     excludedRecords: [],
-    reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 },
+    reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0, documento_ausente: 0, documento_dni_invalido: 0, documento_nie_invalido: 0, documento_no_verificable: 0, nombre_incompleto: 0, nombre_invalido: 0, apellidos_incompletos: 0, apellidos_invalidos: 0 },
   };
   const output: EnrichmentOutput | null = input.original.enrichmentOutput
     ? { columns: [...input.original.enrichmentOutput.columns], rows: input.original.enrichmentOutput.rows.filter((row) => input.eligibleSourceRows.has(row.sourceRow)).map((row) => ({ sourceRow: row.sourceRow, cells: [...row.cells] })) }

@@ -192,5 +192,7 @@ test("la selección excepcional exige una ORIGINAL completa y no reutiliza API_R
   assert.match(executor, /getFirstRealSozarEligibleRecord/);
   assert.match(selection, /base\.tipo !== "ORIGINAL"/);
   assert.match(selection, /recordProvenance === "API_REAL"/);
+  assert.match(selection, /identityExclusionReason/);
+  assert.match(selection, /validación de identidad requerida antes de consultar Sozar/);
   assert.match(selection, /asociaciones: \{ some: \{ baseOriginalId: baseId \} \}/);
 });

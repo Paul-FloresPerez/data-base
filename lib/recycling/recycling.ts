@@ -66,7 +66,7 @@ export function recyclingToBatch(analysis: RecyclingAnalysis, selectedTipificati
   batch.kind = "RECICLADA";
   batch.provenanceBySourceRow = Object.fromEntries(analysis.records.map((record) => [record.sourceRow, "CRM"]));
   batch.recyclingHistory = { ...dataset, records: analysis.records.filter((record) => !selectedRows.has(record.sourceRow)).map(toImportedRecord) };
-  batch.cleaning = { validRecords: dataset.records.map((record) => ({ ...record, normalizedMobile: record.mobile } as ValidRecord)), excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0 } };
+  batch.cleaning = { validRecords: dataset.records.map((record) => ({ ...record, normalizedMobile: record.mobile } as ValidRecord)), excludedRecords: [], reasonBreakdown: { telefono_vacio: 0, telefono_fijo: 0, telefono_invalido: 0, nombre_vacio: 0, telefono_duplicado: 0, documento_ausente: 0, documento_dni_invalido: 0, documento_nie_invalido: 0, documento_no_verificable: 0, nombre_incompleto: 0, nombre_invalido: 0, apellidos_incompletos: 0, apellidos_invalidos: 0 } };
   batch.enrichmentOutput = { columns: dataset.columns, rows: batch.cleaning.validRecords.map((record) => ({ sourceRow: record.sourceRow, cells: record.cells })) };
   batch.distribution = defaultDistributionSettings(); return batch;
 }

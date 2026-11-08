@@ -11,7 +11,7 @@ function isReceiptDate(value: unknown): boolean {
 
 function isColumnMapping(value: unknown, columnCount: number): boolean {
   if (!isPlainObject(value) || !Number.isInteger(value.movil) || Number(value.movil) < 0 || Number(value.movil) >= columnCount || !isPlainObject(value.enriched)) return false;
-  for (const field of [value.documento, value.nombre, value.telefono_contacto]) {
+  for (const field of [value.documento, value.nombre, value.apellido_paterno, value.apellido_materno, value.telefono_contacto]) {
     if (field !== undefined && (!Number.isInteger(field) || Number(field) < 0 || Number(field) >= columnCount)) return false;
   }
   return Object.values(value.enriched).every((field) => Number.isInteger(field) && Number(field) >= 0 && Number(field) < columnCount);

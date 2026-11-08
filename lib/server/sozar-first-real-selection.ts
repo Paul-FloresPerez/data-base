@@ -1,6 +1,8 @@
 import "server-only";
 
+import { identityExclusionReason } from "../excel/cleaning.ts";
 import { normalizeColumnName } from "../excel/import-excel.ts";
+import type { ColumnMapping } from "../excel/types.ts";
 import { prisma } from "./prisma.ts";
 
 type Provenance = "EXCEL" | "CRM" | "MOCK" | "API_REAL";
@@ -20,6 +22,24 @@ function provenance(value: unknown): Provenance {
 
 function isCompleted(value: unknown) {
   return asRecord(value).completed === true;
+}
+
+function columnMapping(value: unknown): ColumnMapping | null {
+  const mapping = asRecord(asRecord(value).columnMapping);
+  return Number.isInteger(mapping.movil) && Number(mapping.movil) >= 0 && asRecord(mapping.enriched)
+    ? mapping as unknown as ColumnMapping
+    : null;
+}
+
+function originalCells(value: unknown): string[] {
+  const cells = asRecord(value).cells;
+  return Array.isArray(cells) ? cells.map((cell) => String(cell ?? "")) : [];
+}
+
+function identityFailure(record: { documento: string | null; nombre: string | null; datosOriginales: unknown }, mapping: ColumnMapping | null) {
+  if (!mapping) return "La base no conserva el mapeo de identidad necesario para la consulta única.";
+  const reason = identityExclusionReason({ document: record.documento ?? "", name: record.nombre ?? "", cells: originalCells(record.datosOriginales) }, mapping);
+  return reason ? "El móvil seleccionado no cumple la validación de identidad requerida antes de consultar Sozar." : null;
 }
 
 function stringValue(value: unknown): string | null {
@@ -63,7 +83,7 @@ async function originalBase(baseId: string) {
   if (!base || base.tipo !== "ORIGINAL" || base.archivadaEn || !isCompleted(base.metadatos)) {
     throw new Error("La prueba única requiere una base ORIGINAL guardada y completa.");
   }
-  return base;
+  return { ...base, columnMapping: columnMapping(base.metadatos) };
 }
 
 async function crmMobilesForBase(baseId: string, mobiles: readonly string[]) {
@@ -85,13 +105,13 @@ async function crmMobilesForBase(baseId: string, mobiles: readonly string[]) {
 
 /** Metadata only: no mobile, document or CRM row values leave this server helper. */
 export async function getFirstRealSozarCandidateHints(baseId: string): Promise<FirstRealSozarCandidateHint[]> {
-  await originalBase(baseId);
+  const base = await originalBase(baseId);
   const records = await prisma.registro.findMany({
     where: { baseId, movilNormalizado: { not: null }, tipificacion: "VALIDO" },
-    select: { numeroFilaOriginal: true, movilNormalizado: true, datosOriginales: true },
+    select: { numeroFilaOriginal: true, movilNormalizado: true, documento: true, nombre: true, datosOriginales: true },
     orderBy: { numeroFilaOriginal: "asc" },
   });
-  const candidates = records.filter((record) => provenance(record.datosOriginales) !== "API_REAL");
+  const candidates = records.filter((record) => provenance(record.datosOriginales) !== "API_REAL" && !identityFailure(record, base.columnMapping));
   const crmMobiles = await crmMobilesForBase(baseId, candidates.flatMap((record) => record.movilNormalizado ? [record.movilNormalizado] : []));
   return candidates.map((record) => ({ sourceRow: record.numeroFilaOriginal, hasCrmHistory: Boolean(record.movilNormalizado && crmMobiles.has(record.movilNormalizado)) }))
     .sort((left, right) => Number(right.hasCrmHistory) - Number(left.hasCrmHistory) || left.sourceRow - right.sourceRow);
@@ -102,12 +122,14 @@ export async function getFirstRealSozarCandidateHints(baseId: string): Promise<F
  * CRM values are reported only when consistent; MOCK remains labeled as MOCK.
  */
 export async function getFirstRealSozarSelectionContext(baseId: string, sourceRow: number): Promise<FirstRealSozarSelectionContext> {
-  await originalBase(baseId);
+  const base = await originalBase(baseId);
   const record = await prisma.registro.findFirst({
     where: { baseId, numeroFilaOriginal: sourceRow, movilNormalizado: { not: null }, tipificacion: "VALIDO" },
-    select: { numeroFilaOriginal: true, movilNormalizado: true, operadorActual: true, operadorOriginal: true, fechaPortabilidad: true, datosOriginales: true },
+    select: { numeroFilaOriginal: true, movilNormalizado: true, documento: true, nombre: true, operadorActual: true, operadorOriginal: true, fechaPortabilidad: true, datosOriginales: true },
   });
   if (!record?.movilNormalizado) throw new Error("El móvil seleccionado no pertenece a una fila válida de la base ORIGINAL.");
+  const failure = identityFailure(record, base.columnMapping);
+  if (failure) throw new Error(failure);
   const recordProvenance = provenance(record.datosOriginales);
   if (recordProvenance === "API_REAL") throw new Error("El móvil seleccionado ya tiene enriquecimiento API_REAL.");
 
