@@ -55,7 +55,7 @@ export function ExportWorkspace({ batch, masterOutput, onBack, onExportCompleted
     tone: "idle",
   });
   const campaignOutput = useMemo(() => batch.kind === "RECICLADA" ? buildCrmRecyclingOutput(output) : output, [batch.kind, output]);
-  const plan = useMemo(() => projectExportPlan(buildExportPlan(report, settings.selectedCampaigns, settings.batchSize), campaignOutput), [campaignOutput, report, settings.batchSize, settings.selectedCampaigns]);
+  const plan = useMemo(() => projectExportPlan(buildExportPlan(report, settings.selectedCampaigns, settings.batchSize, settings.shuffleSeed), campaignOutput), [campaignOutput, report, settings.batchSize, settings.selectedCampaigns, settings.shuffleSeed]);
   const crmContractValid = useMemo(() => {
     if (batch.kind !== "RECICLADA") return true;
     try { assertCrmRecyclingContract(campaignOutput); return true; } catch { return false; }

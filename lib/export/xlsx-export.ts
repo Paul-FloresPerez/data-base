@@ -87,16 +87,41 @@ export function splitIntoBatches<T>(rows: readonly T[], batchSize: number): T[][
   return batches;
 }
 
+/** A small deterministic PRNG keeps a prepared distribution reproducible from
+ * its persisted seed without treating browser order as commercial evidence. */
+function seededOrder(rows: readonly EnrichmentOutputRow[], seed: string | undefined): EnrichmentOutputRow[] {
+  if (!seed) return [...rows];
+  let state = 2166136261;
+  for (const character of seed) {
+    state ^= character.charCodeAt(0);
+    state = Math.imul(state, 16777619);
+  }
+  const next = () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+  const result = [...rows];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const target = Math.floor(next() * (index + 1));
+    [result[index], result[target]] = [result[target]!, result[index]!];
+  }
+  return result;
+}
+
 export function buildExportPlan(
   report: CampaignReport,
   selectedCampaigns: readonly CampaignOperatorId[],
   batchSize: number,
+  shuffleSeed?: string,
 ): ExportPlan {
   const selectedCampaignsSet = new Set(selectedCampaigns);
   const campaigns = report.campaigns
     .filter((campaign) => selectedCampaignsSet.has(campaign.operator.id))
     .map((campaign) => {
-      const rows = toCampaignRows(campaign);
+      const rows = seededOrder(toCampaignRows(campaign), shuffleSeed ? `${shuffleSeed}:${campaign.operator.id}` : undefined);
       const folderName = campaign.operator.id.toLocaleUpperCase("es-ES");
       const batches = splitIntoBatches(rows, batchSize).map((batchRows, index) => ({
         index: index + 1,

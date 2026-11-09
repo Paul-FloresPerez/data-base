@@ -22,8 +22,8 @@ interface DistributionWorkspaceProps {
 
 export function DistributionWorkspace({ batch, commercialDistributionConfirmed, isConfirmingCommercialDistribution, commercialTransitionStatus, onBack, onConfirmCommercialDistribution, onContinue, onSettingsChange, report, settings }: DistributionWorkspaceProps) {
   const plan = useMemo(
-    () => buildExportPlan(report, settings.selectedCampaigns, settings.batchSize),
-    [report, settings.batchSize, settings.selectedCampaigns],
+    () => buildExportPlan(report, settings.selectedCampaigns, settings.batchSize, settings.shuffleSeed),
+    [report, settings.batchSize, settings.selectedCampaigns, settings.shuffleSeed],
   );
   const totalBatches = plan.campaigns.reduce((total, campaign) => total + campaign.batches.length, 0);
 
@@ -57,6 +57,8 @@ export function DistributionWorkspace({ batch, commercialDistributionConfirmed, 
       </div>
 
       <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-600"><span className="font-semibold text-slate-900">Base activa:</span> {batch.fileName} · {batch.kind} · <span className="font-mono">{batch.id.slice(0, 8)}</span> · {report.filteredRecords.length} tras filtros.</p>
+
+      {settings.shuffleSeed ? <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs text-blue-900">Orden mezclado de forma reproducible para esta ejecución. Semilla de auditoría: <span className="font-mono">{settings.shuffleSeed}</span>.</p> : null}
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,27,47,0.04)]">
         <div className="grid gap-5 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-end">

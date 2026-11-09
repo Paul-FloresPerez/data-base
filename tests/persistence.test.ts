@@ -5,7 +5,10 @@ import { getAccessDecision } from "../lib/auth/access-control.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
 import { batchSaveSignature, needsBatchSave } from "../lib/persistence/client-base-save.ts";
 import { cleanDataset } from "../lib/excel/cleaning.ts";
+import { outputFromPreEnrichedExcel, summarizePreEnrichedExcel } from "../lib/excel/pre-enriched-import.ts";
 import { createWorkingBatch, getProcessingModule } from "../lib/workspace/batch.ts";
+import { buildCampaignReport } from "../lib/campaigns/campaign-engine.ts";
+import { buildExportPlan } from "../lib/export/xlsx-export.ts";
 import { analyzeRecyclingFiles, recyclingToBatch } from "../lib/recycling/recycling.ts";
 import { prepareDisabledRealHlrQueue } from "../lib/services/real-hlr-queue-plan.ts";
 
@@ -118,6 +121,50 @@ test("una ORIGINAL limpiada de 9.999 filas conserva el protocolo de bloques prev
   assert.equal(saved.start.state, "LISTA_PARA_ENRIQUECER");
   assert.equal(splitRecords(saved.records).length, 100);
   assert.equal(splitRecords(saved.records).every((chunk) => chunk.length <= 100), true);
+});
+
+test("una base ya enriquecida conserva EXCEL, columnas y reglas comerciales sin Sozar", () => {
+  const enriched = {
+    fileName: "base-enriquecida.xlsx",
+    columns: ["Teléfono Movil", "Nombre", "Operador Actual", "Fecha Portabilidad"],
+    columnMapping: { movil: 0, nombre: 1, enriched: { operador_actual: 2, fecha_portabilidad: 3 } },
+    records: [
+      { sourceRow: 2, cells: ["612345678", "Ana", "Orange", "2024-01-02"], mobile: "612345678", document: "", name: "Ana", contactPhone: "" },
+      { sourceRow: 3, cells: ["712345678", "Bea", "Operador sin verificar", "2024-02-03"], mobile: "712345678", document: "", name: "Bea", contactPhone: "" },
+      { sourceRow: 4, cells: ["622345678", "Carla", "Vodafone", "fecha inválida"], mobile: "622345678", document: "", name: "Carla", contactPhone: "" },
+    ],
+  };
+  const batch = createWorkingBatch(enriched, "33333333-3333-4333-8333-333333333333", "2026-11-09T00:00:00.000Z", "YA_ENRIQUECIDA");
+  batch.cleaning = cleanDataset(enriched);
+  batch.enrichmentOutput = outputFromPreEnrichedExcel(enriched, batch.cleaning);
+  batch.distribution = { batchSize: 100, selectedCampaigns: ["vodafone"], shuffleSeed: batch.id };
+  const summary = summarizePreEnrichedExcel(enriched, batch.cleaning);
+  const saved = serializeBatch(batch, "Base enriquecida");
+  const report = buildCampaignReport({ ...batch.enrichmentOutput, provenanceBySourceRow: batch.provenanceBySourceRow }, ["vodafone"], { includeWithoutPortabilityDate: false });
+
+  assert.equal(saved.start.metadata.importMode, "YA_ENRIQUECIDA");
+  assert.equal(saved.start.metadata.enrichmentSource, "excel");
+  assert.deepEqual(batch.enrichmentOutput.columns, enriched.columns);
+  assert.equal(saved.records.every((record) => record.provenance === "EXCEL"), true);
+  assert.equal(summary.recognizedCurrentOperator, 2);
+  assert.equal(summary.unknownCurrentOperator, 1);
+  assert.equal(summary.invalidPortabilityDates, 1);
+  assert.deepEqual(report.campaigns[0]?.eligible.map((row) => row.sourceRow), [2]);
+  assert.deepEqual(report.campaigns[0]?.unclassified.map((row) => row.sourceRow), [3]);
+});
+
+test("la mezcla con semilla es reproducible y mantiene lotes de 100", () => {
+  const output = {
+    columns: ["Teléfono Movil", "Operador Actual"],
+    rows: Array.from({ length: 250 }, (_, index) => ({ sourceRow: index + 2, cells: [`6${String(10_000_000 + index)}`, "Orange"] })),
+  };
+  const report = buildCampaignReport(output, ["vodafone"]);
+  const first = buildExportPlan(report, ["vodafone"], 100, "seed-a");
+  const repeated = buildExportPlan(report, ["vodafone"], 100, "seed-a");
+  const changed = buildExportPlan(report, ["vodafone"], 100, "seed-b");
+  assert.deepEqual(first.campaigns[0]?.batches.map((batch) => batch.rows.length), [100, 100, 50]);
+  assert.deepEqual(first.campaigns[0]?.batches.flatMap((batch) => batch.rows.map((row) => row.sourceRow)), repeated.campaigns[0]?.batches.flatMap((batch) => batch.rows.map((row) => row.sourceRow)));
+  assert.notDeepEqual(first.campaigns[0]?.batches.flatMap((batch) => batch.rows.map((row) => row.sourceRow)), changed.campaigns[0]?.batches.flatMap((batch) => batch.rows.map((row) => row.sourceRow)));
 });
 
 test("el flujo exige un guardado explícito antes de enriquecer y no confirma lotes", async () => {

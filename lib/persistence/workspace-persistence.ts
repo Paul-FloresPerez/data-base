@@ -4,7 +4,7 @@ import { buildExportPlan } from "../export/xlsx-export.ts";
 import type { CleaningResult, EnrichmentMode, ExclusionReason, ImportedDataset } from "../excel/types.ts";
 import { enrichedFieldHeaders } from "../excel/types.ts";
 import { portabilityDateForStorage } from "../excel/portability-date.ts";
-import type { BatchKind, DistributionSettings, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
+import type { BatchKind, DistributionSettings, ImportMode, RecordProvenance, WorkingBatch } from "../workspace/batch.ts";
 import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
 import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
 import type { HistoricalResultImportSummary } from "../excel/historical-results.ts";
@@ -45,6 +45,8 @@ export interface StoredMetadata {
   /** Immutable snapshot of the commercial policy used to complete this base. */
   commercialMatrix?: CommercialMatrixSnapshot;
   kind?: BatchKind;
+  /** Original imports with trusted commercial columns skip Sozar, never its controls. */
+  importMode?: ImportMode;
   operationalSourceRows?: number[];
   /** Client-side export was actually generated and download started. */
   exportCompletedAt?: string | null;
@@ -173,6 +175,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
           : null,
         commercialMatrix: commercialMatrixSnapshot(),
         kind: batch.kind,
+        importMode: batch.importMode,
         operationalSourceRows: batch.kind === "RECICLADA" ? batch.dataset.records.map((record) => record.sourceRow) : undefined,
         exportCompletedAt: batch.exportCompletedAt,
         commercialDistributionConfirmed: batch.commercialDistributionConfirmed,
@@ -207,7 +210,7 @@ export function splitRecords(records: StoredRecord[]): StoredRecord[][] {
 export function buildStoredLots(batch: WorkingBatch): SavedLot[] {
   if (!batch.enrichmentOutput) return [];
   const report = buildCampaignReport({ ...batch.enrichmentOutput, provenanceBySourceRow: batch.provenanceBySourceRow }, campaignOperators, batch.campaignFilters);
-  const plan = buildExportPlan(report, batch.distribution.selectedCampaigns, batch.distribution.batchSize);
+  const plan = buildExportPlan(report, batch.distribution.selectedCampaigns, batch.distribution.batchSize, batch.distribution.shuffleSeed);
   return plan.campaigns.flatMap((campaign) => campaign.batches.map((lot) => ({
     campaign: campaign.campaign.toUpperCase() as "YOIGO" | "VODAFONE",
     number: lot.index,
@@ -241,6 +244,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     code: base.code,
     originalBaseCode: base.metadata.originalBaseCode ?? (base.originalBaseId ? null : base.code ?? null),
     kind: base.metadata.kind ?? "ORIGINAL",
+    importMode: base.metadata.importMode ?? "SIN_ENRIQUECER",
     fileName: base.metadata.originalFileName,
     displayName: base.name,
     receivedAt: base.receivedAt ?? base.metadata.receivedAt ?? null,

@@ -17,6 +17,7 @@ import { buildCampaignReport, campaignOperators, type CampaignFilters, type Camp
 import { cleanDataset } from "@/lib/excel/cleaning";
 import { buildEnrichmentOutput } from "@/lib/excel/enrichment-output";
 import { importExcelFile } from "@/lib/excel/import-excel";
+import { outputFromPreEnrichedExcel, summarizePreEnrichedExcel } from "@/lib/excel/pre-enriched-import";
 import { importHistoricalResultsFile, type HistoricalResultImportSummary } from "@/lib/excel/historical-results";
 import {
   enrichedFieldHeaders,
@@ -42,6 +43,7 @@ import {
   getProcessingModule,
   summarizeBatch,
   type DistributionSettings,
+  type ImportMode,
   type WorkingBatch,
 } from "@/lib/workspace/batch";
 
@@ -131,6 +133,7 @@ export function ExcelWorkspace() {
   const [isNewBatchConfirmationOpen, setIsNewBatchConfirmationOpen] = useState(false);
   const [isReplaceConfirmationOpen, setIsReplaceConfirmationOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [selectedImportMode, setSelectedImportMode] = useState<ImportMode>("YA_ENRIQUECIDA");
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
@@ -199,6 +202,10 @@ export function ExcelWorkspace() {
   const visibleReasons = cleaning
     ? (Object.entries(cleaning.reasonBreakdown).filter(([, count]) => count > 0) as [ExclusionReason, number][])
     : [];
+  const preEnrichedSummary = useMemo(
+    () => batch?.importMode === "YA_ENRIQUECIDA" && dataset && cleaning ? summarizePreEnrichedExcel(dataset, cleaning) : null,
+    [batch?.importMode, cleaning, dataset],
+  );
   const realHlrPreview = useMemo(
     () => cleaning && dataset ? getRealHlrPreview(cleaning, dataset, batch?.provenanceBySourceRow ?? {}, enrichmentOutput) : null,
     [batch?.provenanceBySourceRow, cleaning, dataset, enrichmentOutput],
@@ -296,7 +303,7 @@ export function ExcelWorkspace() {
       },
       {
         id: "enriquecer",
-        label: "Enriquecer",
+        label: batch?.importMode === "YA_ENRIQUECIDA" ? "Validar datos" : "Enriquecer",
         module: "enriquecimiento",
         state: enrichmentReady ? "complete" : cleaningReady && activeModule === "enriquecimiento" ? "current" : "pending",
       },
@@ -319,7 +326,7 @@ export function ExcelWorkspace() {
         state: batch?.exportCompletedAt ? "complete" : enrichmentReady && activeModule === "exportacion" ? "current" : "pending",
       },
     ];
-  }, [activeModule, batch?.exportCompletedAt, cleaning, dataset, enrichmentOutput]);
+  }, [activeModule, batch?.exportCompletedAt, batch?.importMode, cleaning, dataset, enrichmentOutput]);
   const campaignReport = useMemo(
     () => enrichmentOutput ? buildCampaignReport({ ...enrichmentOutput, provenanceBySourceRow: batch?.provenanceBySourceRow }, campaignOperators, campaignFilters) : null,
     [batch?.provenanceBySourceRow, campaignFilters, enrichmentOutput],
@@ -329,13 +336,13 @@ export function ExcelWorkspace() {
     [dataset, enrichmentOutput],
   );
 
-  async function importFile(file: File) {
+  async function importFile(file: File, importMode = selectedImportMode) {
     setError(null);
     setIsImporting(true);
 
     try {
       const nextDataset = await importExcelFile(file);
-      setBatch(createWorkingBatch(nextDataset));
+      setBatch(createWorkingBatch(nextDataset, undefined, undefined, importMode));
       setIsDemoMode(false);
       setIsOverwriteConfirmationOpen(false);
       setIsReplaceConfirmationOpen(false);
@@ -417,9 +424,15 @@ export function ExcelWorkspace() {
         ? {
             ...currentBatch,
             cleaning: nextCleaning,
-            enrichmentOutput: null,
+            // A pre-enriched workbook remains an Excel source: no provider is
+            // consulted and no value is added or replaced at this boundary.
+            enrichmentOutput: currentBatch.importMode === "YA_ENRIQUECIDA"
+              ? outputFromPreEnrichedExcel(currentBatch.dataset, nextCleaning)
+              : null,
             campaignFilters: { ...defaultCampaignFilters },
-            distribution: defaultDistributionSettings(),
+            distribution: currentBatch.importMode === "YA_ENRIQUECIDA"
+              ? { ...defaultDistributionSettings(), shuffleSeed: currentBatch.id }
+              : defaultDistributionSettings(),
             exportCompletedAt: null,
             realHlrQueue: null,
             historicalResultImport: null,
@@ -703,6 +716,18 @@ export function ExcelWorkspace() {
             <div className="mx-auto max-w-md text-center">
               <p className="text-base font-semibold text-slate-900">Selecciona un archivo Excel</p>
               <p className="mt-2 text-sm leading-6 text-slate-600">Se procesará localmente. El archivo original no se modifica ni se envía a un servidor.</p>
+              <fieldset className="mt-5 grid gap-2 text-left" aria-label="Modalidad de importación">
+                <label className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedImportMode === "YA_ENRIQUECIDA" ? "border-blue-500 bg-blue-50 text-blue-950" : "border-slate-200 text-slate-700"}`}>
+                  <input className="mr-2" type="radio" name="import-mode" checked={selectedImportMode === "YA_ENRIQUECIDA"} onChange={() => setSelectedImportMode("YA_ENRIQUECIDA")} />
+                  <span className="font-semibold">Importar base ya enriquecida</span>
+                  <span className="mt-1 block text-xs leading-5">Con operadores y portabilidad del Excel. Se valida, guarda y segmenta sin Sozar.</span>
+                </label>
+                <label className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedImportMode === "SIN_ENRIQUECER" ? "border-blue-500 bg-blue-50 text-blue-950" : "border-slate-200 text-slate-700"}`}>
+                  <input className="mr-2" type="radio" name="import-mode" checked={selectedImportMode === "SIN_ENRIQUECER"} onChange={() => setSelectedImportMode("SIN_ENRIQUECER")} />
+                  <span className="font-semibold">Importar base sin enriquecer</span>
+                  <span className="mt-1 block text-xs leading-5">Conserva el flujo independiente de enriquecimiento; no consulta ningún proveedor automáticamente.</span>
+                </label>
+              </fieldset>
               <input
                 ref={fileInputRef}
                 className="sr-only"
@@ -725,6 +750,7 @@ export function ExcelWorkspace() {
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Archivo</dt><dd className="max-w-48 truncate font-medium text-slate-900" title={dataset.fileName}>{dataset.fileName}</dd></div>
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Registros leídos</dt><dd className="font-semibold text-slate-900">{dataset.records.length}</dd></div>
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Columnas</dt><dd className="font-semibold text-slate-900">{dataset.columns.length}</dd></div>
+                <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Modalidad</dt><dd className="font-semibold text-slate-900">{batch?.importMode === "YA_ENRIQUECIDA" ? "Ya enriquecida · EXCEL" : "Sin enriquecer"}</dd></div>
               </dl>
             ) : <p className="mt-3 text-sm leading-6 text-slate-600">Aún no has seleccionado un archivo. La vista previa aparecerá aquí después de una importación correcta.</p>}
           </section>
@@ -804,6 +830,20 @@ export function ExcelWorkspace() {
     }
     if (batch?.kind === "ORIGINAL" && saveState !== "saved") {
       return <EmptyModuleState title="Guarda la base antes de enriquecer" description="La base ORIGINAL debe estar completa y confirmada por el servidor. Este guardado no genera lotes ni reservas comerciales." action={<PrimaryButton type="button" onClick={() => navigate("limpieza")}>Volver a guardar base</PrimaryButton>} />;
+    }
+    if (batch?.importMode === "YA_ENRIQUECIDA") {
+      const hasCurrentOperator = dataset?.columnMapping.enriched.operador_actual !== undefined;
+      const hasPortabilityDate = dataset?.columnMapping.enriched.fecha_portabilidad !== undefined;
+      return <section aria-labelledby="validacion-comercial-title" className="space-y-5">
+        <ModuleHeading eyebrow="Datos comerciales de origen" headingId="validacion-comercial-title" title="Base enriquecida validada" description="Esta modalidad usa exclusivamente los valores del Excel con procedencia EXCEL. Sozar, MOCK y su cola permanecen fuera de este circuito." action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("limpieza")}>Volver a validación</SecondaryButton><PrimaryButton type="button" onClick={() => navigate("campanas")}>Segmentar campañas</PrimaryButton></div>} />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatusCard label="Móviles válidos" value={cleaning.validRecords.length} tone="emerald" hint="Únicos tras limpieza" />
+          <StatusCard label="Operador actual" value={hasCurrentOperator ? "Detectado" : "Ausente"} tone={hasCurrentOperator ? "blue" : "rose"} hint={hasCurrentOperator ? "Se revalida por campaña" : "Quedará en revisión"} />
+          <StatusCard label="Portabilidad" value={hasPortabilityDate ? "Detectada" : "Ausente"} tone={hasPortabilityDate ? "blue" : "rose"} hint={hasPortabilityDate ? "Se valida por filtro" : "No se inventa"} />
+        </div>
+        {preEnrichedSummary ? <p className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">Operadores reconocidos: <strong>{preEnrichedSummary.recognizedCurrentOperator}</strong> · desconocidos: <strong>{preEnrichedSummary.unknownCurrentOperator}</strong> · ausentes: <strong>{preEnrichedSummary.missingCurrentOperator}</strong> · fechas de portabilidad inválidas: <strong>{preEnrichedSummary.invalidPortabilityDates}</strong>. Ningún valor se modifica.</p> : null}
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">Los campos incompletos, fechas no válidas u operadores no reconocidos no se corrigen ni se completan: Campañas los mostrará con su motivo y solo permitirá distribuir los registros que superen las validaciones vigentes.</p>
+      </section>;
     }
 
     return (
@@ -898,6 +938,9 @@ export function ExcelWorkspace() {
   function renderCampaignsModule() {
     if (!enrichmentOutput || !batch) {
       return <EmptyModuleState title="Aún no hay datos para segmentar" description="Completa la limpieza y el enriquecimiento simulado para consultar la elegibilidad por operador y los filtros geográficos." action={<PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Ir a enriquecimiento</PrimaryButton>} />;
+    }
+    if (batch.kind === "ORIGINAL" && saveState !== "saved") {
+      return <EmptyModuleState title="Guarda la base antes de segmentar" description="La segmentación y la distribución usan únicamente una base ORIGINAL completa y confirmada por el servidor." action={<PrimaryButton type="button" onClick={() => navigate("limpieza")}>Guardar base ORIGINAL</PrimaryButton>} />;
     }
 
     return <CampaignEngine batch={summarizeBatch(batch)} output={enrichmentOutput} provenanceBySourceRow={batch.provenanceBySourceRow} filters={campaignFilters} onBack={() => navigate("enriquecimiento")} onContinue={() => navigate("distribucion")} onFiltersChange={updateCampaignFilters} onSelectedCampaignsChange={updateSelectedCampaigns} selectedCampaigns={batch.distribution.selectedCampaigns} />;

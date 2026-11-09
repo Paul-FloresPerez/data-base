@@ -11,7 +11,12 @@ export type ProcessingModule = "importacion" | "limpieza" | "enriquecimiento" | 
 export interface DistributionSettings {
   batchSize: number;
   selectedCampaigns: CampaignOperatorId[];
+  /** Persisted deterministic ordering for an enriched Excel distribution. */
+  shuffleSeed?: string;
 }
+
+/** The source contract determines whether the Sozar stage is applicable. */
+export type ImportMode = "SIN_ENRIQUECER" | "YA_ENRIQUECIDA";
 
 /** Source of the enrichment data for each record. It is never inferred from a UI label. */
 export type RecordProvenance = "EXCEL" | "CRM" | "MOCK" | "API_REAL";
@@ -49,6 +54,7 @@ export interface WorkingBatch {
   commercialDistributionConfirmed: boolean;
   fileName: string;
   id: string;
+  importMode: ImportMode;
   kind: BatchKind;
   provenanceBySourceRow: Record<number, RecordProvenance>;
   /** Only populated after a server-verified real response in a future phase. */
@@ -99,12 +105,14 @@ export function createWorkingBatch(
   dataset: ImportedDataset,
   id = createBatchId(),
   createdAt = new Date().toISOString(),
+  importMode: ImportMode = "SIN_ENRIQUECER",
 ): WorkingBatch {
   return {
     id,
     code: undefined,
     originalBaseCode: null,
     kind: "ORIGINAL",
+    importMode,
     fileName: dataset.fileName,
     displayName: dataset.fileName.replace(/\.xlsx$/i, ""),
     receivedAt: null,
