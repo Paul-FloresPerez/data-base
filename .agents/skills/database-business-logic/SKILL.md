@@ -29,6 +29,11 @@ The latter prevails if they differ.
   filename as identity.
 - MOCK is development evidence only: it cannot authorize commercial
   distribution. API_REAL, CRM, EXCEL, and MOCK stay distinguishable.
+- A `YA_ENRIQUECIDA` ORIGINAL may proceed from validation and completed save to
+  segmentation without Sozar. Its commercial fields remain `EXCEL` evidence:
+  preserve every supplied column and never fill, relabel, or promote it to
+  `API_REAL`. Unknown operators and invalid or absent portability dates remain
+  campaign-specific exclusions or review reasons.
 - Keep the 24-column CRM contract and batches of at most 100 records where
   commercial export applies.
 - Sozar requires explicit authorization. Do not open shared/bulk gates, retry

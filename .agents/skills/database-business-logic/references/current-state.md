@@ -12,6 +12,7 @@ decision aid, not a replacement for `docs/REGLAS_INVIOLABLES.md`.
 | Gap | Document and identity fields are mapped and preserved, but there is no approved/documented DNI/NIE validation or full-name quality policy. Names are only rejected when a mapped name column is blank/`NULL`/`N/A`. | `lib/excel/import-excel.ts`, `lib/excel/cleaning.ts`. |
 | Approved | Only verifiable real enrichment may authorize commercial distribution; MOCK is test-only. | Rules § Reciclaje and Distribución. |
 | Implemented | Provenance is persisted as EXCEL, CRM, MOCK or API_REAL; campaign eligibility rejects MOCK. | `lib/campaigns/campaign-engine.ts`, `lib/server/base-integrity.ts`, `tests/server-base-integrity.test.ts`. |
+| Approved + implemented | An administrator can choose `YA_ENRIQUECIDA` at import. After ordinary mobile cleanup and completed save, the workbook's own commercial columns flow directly to Campaigns with immutable `EXCEL` provenance; no Sozar or MOCK route runs. Values and column order are preserved, while unknown operators and invalid/absent portability remain review or filter outcomes. | `components/excel-workspace.tsx`, `lib/excel/pre-enriched-import.ts`, `lib/persistence/workspace-persistence.ts`, `tests/persistence.test.ts`. |
 | Undecided | Sozar fields, authentication, price and JSON mapping beyond documented paths are not approved. Do not assume a portability date or operator. | `docs/plans/sozar-response-contract.md`, `lib/services/sozar-response-contract.ts`. |
 
 ## Commercial distribution
