@@ -105,6 +105,10 @@ try {
   const importIds = (await prisma.importacionVentas.findMany({ where: { importacionId: { in: [saleImportId, concurrentImportId] } }, select: { id: true } })).map((item) => item.id);
   if (importIds.length) await prisma.ventaExterna.deleteMany({ where: { importacionId: { in: importIds } } });
   if (importIds.length) await prisma.importacionVentas.deleteMany({ where: { id: { in: importIds } } });
+  // Reservations are deliberately created by the commercial confirmation
+  // cases. Remove only those tied to this run's exact base UUIDs before the
+  // bases, otherwise PostgreSQL correctly protects the historical FK.
+  await prisma.reservaComercial.deleteMany({ where: { baseId: { in: baseIds } } });
   await prisma.base.deleteMany({ where: { id: { in: baseIds } } });
   await prisma.usuario.deleteMany({ where: { id: userId } });
   const [remainingBases, remainingImports, remainingUsers] = await Promise.all([

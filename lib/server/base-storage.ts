@@ -169,7 +169,19 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
 export async function completeBaseSave(baseId: string, revision: string, lots: SavedLot[], userId: string): Promise<false | CompleteBaseSaveResult> {
   const base = await prisma.base.findUnique({ where: { id: baseId }, select: { tipo: true, metadatos: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, baseOriginalId: true, estado: true, archivadaEn: true } });
   const baseMetadata = metadata(base?.metadatos);
-  if (!base || !baseMetadata || baseMetadata.revision !== revision) return false;
+  if (!base || !baseMetadata) return false;
+  // The final response can be lost after PostgreSQL commits. Repeating that
+  // exact user action must report the persisted snapshot rather than turning a
+  // successful no-lot ORIGINAL save into a client-side error. It performs no
+  // new write, lot creation, reservation or release.
+  if (baseMetadata.completed && baseMetadata.revision === null && lots.length === 0) {
+    const createdLots = await prisma.lote.count({ where: { baseId } });
+    // A no-lot completion cannot acknowledge a prior commercial confirmation:
+    // callers must reopen a fresh revision before confirming a distribution.
+    if (createdLots === 0) return { completed: true, createdLots: 0, releasedPriorReservations: 0 };
+    return false;
+  }
+  if (baseMetadata.revision !== revision) return false;
   if (base.archivadaEn) throw new Error("La base está archivada y no admite distribución ni guardado operativo.");
   if (base.estado === "LISTA_PARA_LIMPIAR") {
     throw new Error("Completa la limpieza antes de guardar la base en el historial.");

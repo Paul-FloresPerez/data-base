@@ -60,6 +60,8 @@ export interface StoredMetadata {
   /** Immutable Global Recycling execution that may transfer only its snapshotted holds. */
   globalRecyclingExecutionId?: string | null;
   globalTransitionReservationCount?: number;
+  /** UUID used only by isolated integration fixtures for exact recovery. */
+  testRunId?: string;
 }
 
 export interface SaveStartPayload {

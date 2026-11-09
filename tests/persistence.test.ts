@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { getAccessDecision } from "../lib/auth/access-control.ts";
 import { restoreBatch, serializeBatch, splitRecords } from "../lib/persistence/workspace-persistence.ts";
@@ -97,6 +98,39 @@ test("el guardado separa peticiones y conserva un UUID estable en reintentos", (
   const second = serializeBatch(batch, "Base");
   assert.equal(first.start.id, second.start.id);
   assert.equal(splitRecords(first.records).length, 3);
+});
+
+test("una ORIGINAL limpiada de 9.999 filas conserva el protocolo de bloques previo al enriquecimiento", () => {
+  const rows = Array.from({ length: 9_999 }, (_, index) => ({
+    sourceRow: index + 2,
+    cells: [`6${String(10_000_000 + index)}`, "Ana"],
+    mobile: `6${String(10_000_000 + index)}`,
+    document: "",
+    name: "Ana",
+    contactPhone: "",
+  }));
+  const largeDataset = { fileName: "original-9999.xlsx", columns: ["Móvil", "Nombre"], columnMapping: { movil: 0, nombre: 1, enriched: {} }, records: rows };
+  const batch = createWorkingBatch(largeDataset, "22222222-2222-4222-8222-222222222223");
+  batch.cleaning = cleanDataset(largeDataset);
+
+  const saved = serializeBatch(batch, "Original sintética");
+  assert.equal(saved.start.expectedRecords, 9_999);
+  assert.equal(saved.start.state, "LISTA_PARA_ENRIQUECER");
+  assert.equal(splitRecords(saved.records).length, 100);
+  assert.equal(splitRecords(saved.records).every((chunk) => chunk.length <= 100), true);
+});
+
+test("el flujo exige un guardado explícito antes de enriquecer y no confirma lotes", async () => {
+  const workspace = await readFile(new URL("../components/excel-workspace.tsx", import.meta.url), "utf8");
+  const storage = await readFile(new URL("../lib/server/base-storage.ts", import.meta.url), "utf8");
+
+  assert.match(workspace, /Guardar base ORIGINAL/);
+  assert.match(workspace, /disabled=\{saveState !== "saved"\}/);
+  assert.match(workspace, /batch\?\.kind === "ORIGINAL" && saveState !== "saved"/);
+  assert.match(workspace, /saveOriginalBaseBeforeEnrichment/);
+  assert.match(workspace, /saveBatchToHistory\(savingBatch/);
+  assert.match(storage, /baseMetadata\.completed && baseMetadata\.revision === null && lots\.length === 0/);
+  assert.match(storage, /createdLots = await prisma\.lote\.count\(\{ where: \{ baseId \} \}\)/);
 });
 
 test("las rutas de bases rechazan acceso anónimo", () => {

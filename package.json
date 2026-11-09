@@ -27,6 +27,7 @@
     "db:exercise-intelligent-recycling-confirmation": "node --conditions=react-server --experimental-strip-types scripts/exercise-intelligent-recycling-confirmation.ts",
     "db:exercise-intelligent-recycling-flow": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-intelligent-recycling-flow.ts",
     "db:exercise-recycling-save-recovery": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-recycling-save-recovery.ts",
+    "db:exercise-original-base-save-before-enrichment": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-original-base-save-before-enrichment.ts",
     "db:exercise-original-base-search": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-original-base-search.ts",
     "db:exercise-external-sales-test": "node --conditions=react-server --experimental-strip-types scripts/exercise-external-sales-test.ts",
     "db:exercise-complete-base-save-test": "node --loader ./scripts/alias-loader.mjs --conditions=react-server --experimental-strip-types scripts/exercise-complete-base-save-test.ts",

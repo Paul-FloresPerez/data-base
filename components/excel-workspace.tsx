@@ -1,7 +1,7 @@
 "use client";
 
 import type { ButtonHTMLAttributes, ChangeEvent, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { AppShell, type WorkflowStep, type WorkspaceModule } from "@/components/app-shell";
 import { CampaignEngine } from "@/components/campaign-engine";
@@ -152,7 +152,6 @@ export function ExcelWorkspace() {
   const [isCleaning, startCleaning] = useTransition();
   const [saveState, setSaveState] = useState<"error" | "saved" | "saving" | "unsaved">("saved");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveRetry, setSaveRetry] = useState(0);
   const [isConfirmingCommercialDistribution, setIsConfirmingCommercialDistribution] = useState(false);
   const [commercialTransitionStatus, setCommercialTransitionStatus] = useState<string | null>(null);
   const currentBatchRef = useRef<WorkingBatch | null>(null);
@@ -189,38 +188,9 @@ export function ExcelWorkspace() {
       return;
     }
 
-    const unsavedTimer = window.setTimeout(() => setSaveState("unsaved"), 0);
-    const timer = window.setTimeout(() => {
-      if (saveInFlightRef.current) return;
-      const savingBatch = currentBatchRef.current;
-      if (!savingBatch) return;
-      const savingSignature = JSON.stringify(savingBatch);
-      saveInFlightRef.current = true;
-      setSaveState("saving");
-      setSaveError(null);
-      let completed = false;
-      void saveBatchToHistory(savingBatch, savingBatch.displayName ?? savingBatch.fileName.replace(/\.xlsx$/i, ""))
-        .then(() => {
-          completed = true;
-          lastSavedSignatureRef.current = savingSignature;
-          setSaveState("saved");
-        })
-        .catch((error) => {
-          setSaveState("error");
-          setSaveError(error instanceof Error ? error.message : "No se pudo guardar la base.");
-        })
-        .finally(() => {
-          saveInFlightRef.current = false;
-          if (completed && currentBatchRef.current && batchSaveSignature(currentBatchRef.current) !== savingSignature) {
-            setSaveRetry((current) => current + 1);
-          }
-        });
-    }, 1_500);
-    return () => {
-      window.clearTimeout(unsavedTimer);
-      window.clearTimeout(timer);
-    };
-  }, [batch, batchSignature, saveRetry]);
+    const timer = window.setTimeout(() => setSaveState("unsaved"), 0);
+    return () => window.clearTimeout(timer);
+  }, [batch, batchSignature]);
 
   const existingEnrichmentFields = dataset
     ? enrichedFieldOrder.filter((field) => dataset.columnMapping.enriched[field] !== undefined)
@@ -648,6 +618,31 @@ export function ExcelWorkspace() {
     setBatch((currentBatch) => currentBatch?.commercialDistributionConfirmed ? currentBatch : currentBatch ? { ...currentBatch, exportCompletedAt: null, distribution: settings } : currentBatch);
   }
 
+  /**
+   * Persists the cleaned ORIGINAL before enrichment. This is deliberately an
+   * explicit action: the server receives the same chunked save protocol used
+   * by final confirmation, but an empty lot list means no commercial lot or
+   * reservation is ever created.
+   */
+  const saveOriginalBaseBeforeEnrichment = useCallback(async () => {
+    const savingBatch = currentBatchRef.current;
+    if (!savingBatch?.cleaning || savingBatch.kind !== "ORIGINAL" || saveInFlightRef.current) return;
+    const savingSignature = batchSaveSignature(savingBatch);
+    saveInFlightRef.current = true;
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      await saveBatchToHistory(savingBatch, savingBatch.displayName ?? savingBatch.fileName.replace(/\.xlsx$/i, ""));
+      lastSavedSignatureRef.current = savingSignature;
+      setSaveState("saved");
+    } catch (error) {
+      setSaveState("error");
+      setSaveError(error instanceof Error ? error.message : "No se pudo guardar la base original.");
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }, []);
+
   async function confirmCommercialDistribution() {
     if (!batch || !batch.enrichmentOutput || batch.commercialDistributionConfirmed) return;
     if (!window.confirm("¿Confirmar esta distribución comercial? El servidor reservará los móviles de los lotes y no podrás modificar esta configuración sin una liberación autorizada.")) return;
@@ -763,7 +758,7 @@ export function ExcelWorkspace() {
           headingId="limpieza-title"
           title="Limpieza de registros"
           description="Solo los móviles españoles válidos avanzan al enriquecimiento. Los excluidos se conservan localmente con su motivo y fila de origen."
-          action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <PrimaryButton type="button" onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton> : <SecondaryButton type="button" disabled={isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
+          action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("importacion")}>Volver a importación</SecondaryButton>{cleaning ? <><SecondaryButton type="button" disabled={saveState === "saving" || saveState === "saved"} onClick={() => void saveOriginalBaseBeforeEnrichment()}>{saveState === "saving" ? "Guardando base…" : saveState === "saved" ? "Base ORIGINAL guardada" : "Guardar base ORIGINAL"}</SecondaryButton><PrimaryButton type="button" disabled={saveState !== "saved"} onClick={() => navigate("enriquecimiento")}>Continuar a enriquecimiento</PrimaryButton></> : <SecondaryButton type="button" disabled={isCleaning} onClick={handleClean}>{isCleaning ? "Limpiando…" : "Limpiar base"}</SecondaryButton>}</div>}
         />
 
         {cleaning ? (
@@ -773,13 +768,23 @@ export function ExcelWorkspace() {
               <StatusCard label="Válidos" value={cleaning.validRecords.length} tone="emerald" hint="Listos para enriquecer" />
               <StatusCard label="Excluidos" value={cleaning.excludedRecords.length} tone="rose" hint="Retenidos en memoria" />
             </div>
+            <div aria-live="polite" className={`rounded-lg border px-4 py-3 text-sm ${saveState === "saved" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : saveState === "error" ? "border-rose-200 bg-rose-50 text-rose-900" : "border-amber-200 bg-amber-50 text-amber-950"}`}>
+              {saveState === "saved"
+                ? "La base ORIGINAL está guardada y verificada. No se han creado lotes ni reservas; ya puedes continuar al enriquecimiento."
+                : saveState === "saving"
+                  ? "Guardando todas las filas limpias y comprobando sus recuentos antes de habilitar el enriquecimiento…"
+                  : saveState === "error"
+                    ? `No se pudo guardar la base: ${saveError ?? "error desconocido"}. Reintenta sin volver a importar el archivo.`
+                    : "Guarda la base ORIGINAL después de la limpieza. El enriquecimiento y cualquier consulta individual requieren esta confirmación del servidor."}
+              {saveState === "error" ? <button type="button" onClick={() => void saveOriginalBaseBeforeEnrichment()} className="ml-2 font-semibold underline underline-offset-2">Reintentar guardado</button> : null}
+            </div>
             <div className="grid gap-5 xl:grid-cols-[minmax(270px,0.65fr)_minmax(0,1.35fr)]">
               <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                 <p className="text-sm font-semibold text-slate-900">Motivos de exclusión</p>
                 <dl className="mt-4 divide-y divide-slate-100">
                   {visibleReasons.length > 0 ? visibleReasons.map(([reason, count]) => <div key={reason} className="flex items-center justify-between gap-4 py-3 text-sm"><dt className="text-slate-600">{exclusionReasonLabels[reason]}</dt><dd className="font-semibold text-slate-900">{count}</dd></div>) : <div className="py-4 text-sm text-emerald-700">No se excluyeron registros.</div>}
                 </dl>
-                <SecondaryButton type="button" onClick={() => navigate("enriquecimiento")} className="mt-5">Continuar a enriquecimiento</SecondaryButton>
+                <SecondaryButton type="button" disabled={saveState !== "saved"} onClick={() => navigate("enriquecimiento")} className="mt-5">Continuar a enriquecimiento</SecondaryButton>
               </section>
               <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
                 <p className="text-sm font-semibold text-slate-900">Registros excluidos</p>
@@ -796,6 +801,9 @@ export function ExcelWorkspace() {
   function renderEnrichmentModule() {
     if (!cleaning) {
       return <EmptyModuleState title="La limpieza es necesaria antes de enriquecer" description="Primero valida la base para que solo los registros aptos pasen a la simulación local de HLR/MNP." action={<PrimaryButton type="button" onClick={() => navigate("limpieza")}>Ir a limpieza</PrimaryButton>} />;
+    }
+    if (batch?.kind === "ORIGINAL" && saveState !== "saved") {
+      return <EmptyModuleState title="Guarda la base antes de enriquecer" description="La base ORIGINAL debe estar completa y confirmada por el servidor. Este guardado no genera lotes ni reservas comerciales." action={<PrimaryButton type="button" onClick={() => navigate("limpieza")}>Volver a guardar base</PrimaryButton>} />;
     }
 
     return (
@@ -943,7 +951,7 @@ export function ExcelWorkspace() {
   }
 
   return (
-    <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} saveState={batch ? saveState : undefined} saveError={batch ? saveError : undefined} onRetrySave={() => setSaveRetry((current) => current + 1)} workflow={workflow}>
+      <AppShell activeModule={activeModule} batch={batch ? summarizeBatch(batch) : null} onNavigate={navigate} onOpenProcessing={openProcessing} onStartNewBatch={startNewBatch} saveState={batch ? saveState : undefined} saveError={batch ? saveError : undefined} onRetrySave={() => void saveOriginalBaseBeforeEnrichment()} workflow={workflow}>
       {error ? <div role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><span className="font-semibold">No se pudo continuar: </span>{error}</div> : null}
       {moduleContent}
       {isNewBatchConfirmationOpen ? (
