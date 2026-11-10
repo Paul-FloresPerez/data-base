@@ -1,4 +1,4 @@
-import { importExternalSales, listExternalSalesImports } from "@/lib/server/sales-storage";
+import { externalSalesDashboard, importExternalSales, listExternalSalesImports } from "@/lib/server/sales-storage";
 import { normalizeSpanishMobile } from "@/lib/excel/cleaning";
 import { isPlainObject, readJson, uuidPattern } from "@/lib/server/request-validation";
 import { requireAdminApi } from "@/lib/server/require-admin";
@@ -16,7 +16,8 @@ function isSalesEvent(event: unknown) {
 
 export async function GET() {
   if (!await requireAdminApi()) return Response.json({ error: "No autorizado" }, { status: 401 });
-  return Response.json({ imports: await listExternalSalesImports() });
+  const [imports, dashboard] = await Promise.all([listExternalSalesImports(), externalSalesDashboard()]);
+  return Response.json({ imports, dashboard });
 }
 
 export async function POST(request: Request) {

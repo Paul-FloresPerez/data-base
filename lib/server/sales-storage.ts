@@ -103,3 +103,46 @@ export async function listExternalSalesImports() {
     take: 100,
   });
 }
+
+/**
+ * Aggregated, read-only sales evidence. A sale is linked to an original base
+ * or lot only through persisted `lote_registros`; a mobile or an advisor name
+ * alone never creates that attribution.
+ */
+export async function externalSalesDashboard() {
+  const sales = await prisma.ventaExterna.findMany({
+    where: { estado: "CONFIRMADA", movilNormalizado: { not: null } },
+    select: { movilNormalizado: true, asesor: true },
+  });
+  const mobiles = [...new Set(sales.flatMap((sale) => sale.movilNormalizado ? [sale.movilNormalizado] : []))];
+  const relations = mobiles.length ? await prisma.loteRegistro.findMany({
+    where: { registro: { movilNormalizado: { in: mobiles } } },
+    select: { registro: { select: { movilNormalizado: true } }, lote: { select: { id: true, baseId: true, baseOriginalId: true, campana: true, numeroLote: true } } },
+  }) : [];
+  const byMobile = new Map<string, { id: string; baseId: string; baseOriginalId: string | null; campaign: string; number: number }[]>();
+  for (const relation of relations) {
+    const mobile = relation.registro.movilNormalizado;
+    if (!mobile) continue;
+    byMobile.set(mobile, [...(byMobile.get(mobile) ?? []), { id: relation.lote.id, baseId: relation.lote.baseId, baseOriginalId: relation.lote.baseOriginalId, campaign: relation.lote.campana, number: relation.lote.numeroLote }]);
+  }
+  const summary = { confirmed: sales.length, withoutDistributionEvidence: 0, attributedToOneLot: 0, ambiguousDistribution: 0 };
+  const byLot = new Map<string, { lotId: string; baseOriginalId: string; campaign: string; number: number; confirmedSales: number }>();
+  for (const sale of sales) {
+    const candidates = [...new Map((byMobile.get(sale.movilNormalizado!) ?? []).map((lot) => [lot.id, lot])).values()];
+    if (candidates.length === 0) { summary.withoutDistributionEvidence += 1; continue; }
+    if (candidates.length > 1) { summary.ambiguousDistribution += 1; continue; }
+    summary.attributedToOneLot += 1;
+    const lot = candidates[0]!;
+    const current = byLot.get(lot.id) ?? { lotId: lot.id, baseOriginalId: lot.baseOriginalId ?? lot.baseId, campaign: lot.campaign, number: lot.number, confirmedSales: 0 };
+    current.confirmedSales += 1;
+    byLot.set(lot.id, current);
+  }
+  const declaredAdvisor = new Map<string, number>();
+  for (const sale of sales) if (sale.asesor?.trim()) declaredAdvisor.set(sale.asesor.trim(), (declaredAdvisor.get(sale.asesor.trim()) ?? 0) + 1);
+  return {
+    summary,
+    lots: [...byLot.values()].sort((left, right) => right.confirmedSales - left.confirmedSales || left.lotId.localeCompare(right.lotId)).slice(0, 100),
+    // This is source-file metadata, deliberately not an inferred lot owner.
+    declaredAdvisors: [...declaredAdvisor].map(([advisor, confirmedSales]) => ({ advisor, confirmedSales })).sort((left, right) => right.confirmedSales - left.confirmedSales || left.advisor.localeCompare(right.advisor, "es")),
+  };
+}
