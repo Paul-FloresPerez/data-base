@@ -32,9 +32,6 @@ function transitionReservationIds(value: unknown): string[] {
   return Array.isArray(ids) ? [...new Set(ids.filter((id): id is string => typeof id === "string"))] : [];
 }
 
-/** Preserve the server-created global snapshot evidence when a generated base
- * is reopened and saved for its later commercial confirmation. It is never
- * accepted from the browser as a new authorization. */
 function preservedGlobalTransition(value: unknown): Prisma.InputJsonValue | null {
   if (!value || typeof value !== "object") return null;
   const transition = (value as { globalTransition?: unknown }).globalTransition;
@@ -145,13 +142,11 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
       throw new Error("Una fila ya guardada no puede cambiar dentro de la misma revisión.");
     }
   }
-  // A client chunk contains up to 100 records. Neon may need more than the
-  // Prisma default five seconds when reopening a generated global base, so the
-  // complete chunk remains one atomic write with an explicit bounded timeout.
-  await prisma.$transaction(records.map((record) => {
+  const missingRecords = records.filter((record) => !existingByRow.has(record.sourceRow));
+  const rowsToCreate = missingRecords.map((record) => {
     const scalar = enrichmentScalars(record.enrichedCells, baseMetadata.enrichmentColumns ?? []);
     const preservedTransition = preservedGlobalTransition(existingByRow.get(record.sourceRow));
-    const data = {
+    return {
       movilNormalizado: record.normalizedMobile,
       documento: record.document || null,
       nombre: record.name || null,
@@ -161,8 +156,21 @@ export async function saveRecordChunk(baseId: string, revision: string, records:
       tipificacion: record.tipification,
       datosOriginales: { version: 1, cells: record.cells, mobile: record.mobile, contactPhone: record.contactPhone, reason: record.reason, enrichedCells: record.enrichedCells, provenance: record.provenance, ...(preservedTransition ? { globalTransition: preservedTransition } : {}) } as Prisma.InputJsonValue,
     };
-    return prisma.registro.upsert({ where: { baseId_numeroFilaOriginal: { baseId, numeroFilaOriginal: record.sourceRow } }, create: { baseId, numeroFilaOriginal: record.sourceRow, ...data }, update: data });
-  }), { maxWait: 10_000, timeout: 30_000 });
+  });
+  // A fresh import never changes an already persisted source row. Writing the
+  // missing part in one statement removes up to 100 ORM round trips per HTTP
+  // chunk while the structural comparison above makes retries idempotent.
+  if (rowsToCreate.length) {
+    try {
+      await prisma.registro.createMany({ data: rowsToCreate.map((data, index) => ({ baseId, numeroFilaOriginal: missingRecords[index]!.sourceRow, ...data })) });
+    } catch (error) {
+      // Another identical retry may have won between the read and create. Only
+      // accept it after rechecking the exact immutable source rows.
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+      const raced = await prisma.registro.findMany({ where: { baseId, numeroFilaOriginal: { in: records.map((record) => record.sourceRow) } }, select: { numeroFilaOriginal: true, datosOriginales: true } });
+      if (raced.length !== records.length || raced.some((row) => !sameStoredOriginalRow(row.datosOriginales, records.find((record) => record.sourceRow === row.numeroFilaOriginal)!))) throw error;
+    }
+  }
   return true;
 }
 

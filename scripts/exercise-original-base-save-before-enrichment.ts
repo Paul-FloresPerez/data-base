@@ -12,14 +12,15 @@ if (!testUrl || !expectedBranchId) throw new Error("Dedicated Test configuration
 process.env.DATABASE_URL = testUrl;
 process.env.DATABASE_URL_UNPOOLED = testUrl;
 
-const { beginBaseSave, completeBaseSave } = await import("../lib/server/base-storage.ts");
+const { beginBaseSave, completeBaseSave, saveRecordChunk } = await import("../lib/server/base-storage.ts");
 const prisma = new PrismaClient({ adapter: new PrismaNeon({ connectionString: testUrl }) });
 const testRunId = randomUUID();
 const userId = randomUUID();
 const baseId = randomUUID();
 const revision = randomUUID();
-const rowCount = 9_999;
-const firstPassRows = 7_000;
+const rowCount = Number.parseInt(process.env.BASE_SAVE_BENCHMARK_ROWS ?? "9999", 10);
+if (!Number.isInteger(rowCount) || rowCount < 2 || rowCount > 50_000) throw new Error("BASE_SAVE_BENCHMARK_ROWS must be between 2 and 50000.");
+const firstPassRows = Math.max(1, Math.min(7_000, Math.floor(rowCount * 0.7)));
 const seed = Number.parseInt(testRunId.replaceAll("-", "").slice(0, 6), 16) % 8_000_000;
 
 function mobile(index: number): string {
@@ -71,24 +72,15 @@ const payload: SaveStartPayload = {
   },
 };
 
-function persistedRecord(record: StoredRecord) {
-  return {
-    baseId,
-    numeroFilaOriginal: record.sourceRow,
-    movilNormalizado: record.normalizedMobile,
-    documento: record.document || null,
-    nombre: record.name || null,
-    tipificacion: record.tipification,
-    datosOriginales: {
-      version: 1,
-      cells: record.cells,
-      mobile: record.mobile,
-      contactPhone: record.contactPhone,
-      reason: record.reason,
-      enrichedCells: record.enrichedCells,
-      provenance: record.provenance,
-    },
-  };
+async function persistThroughProductionPath(items: StoredRecord[]) {
+  const startedAt = performance.now();
+  let requests = 0;
+  for (let index = 0; index < items.length; index += 400) {
+    const chunks = Array.from({ length: Math.ceil(Math.min(400, items.length - index) / 100) }, (_, offset) => items.slice(index + offset * 100, index + (offset + 1) * 100));
+    await Promise.all(chunks.map((chunk) => saveRecordChunk(baseId, revision, chunk)));
+    requests += chunks.length;
+  }
+  return { requests, elapsedMs: Math.round(performance.now() - startedAt) };
 }
 
 try {
@@ -102,8 +94,8 @@ try {
   console.log(JSON.stringify({ target: "test", phase: "base-started" }));
   // Simulate an interrupted browser upload with an exact, isolated partial
   // snapshot. No incomplete fixture may be treated as operational.
-  await prisma.registro.createMany({ data: records.slice(0, firstPassRows).map(persistedRecord) });
-  console.log(JSON.stringify({ target: "test", phase: "interruption-created", rowsPersisted: firstPassRows }));
+  const firstPass = await persistThroughProductionPath(records.slice(0, firstPassRows));
+  console.log(JSON.stringify({ target: "test", phase: "interruption-created", rowsPersisted: firstPassRows, ...firstPass }));
 
   let incompleteRejected = false;
   try {
@@ -116,11 +108,8 @@ try {
     throw new Error("An interrupted ORIGINAL save was incorrectly completed.");
   }
 
-  // The client-side protocol is unit-tested at 100 chunks. This integration
-  // test validates the server's 9,999-row completion and recovery invariants
-  // using direct Test-only fixture insertion, avoiding 100 remote round trips.
-  await prisma.registro.createMany({ data: records.slice(firstPassRows).map(persistedRecord) });
-  console.log(JSON.stringify({ target: "test", phase: "all-rows-persisted", rowsPersisted: rowCount }));
+  const secondPass = await persistThroughProductionPath(records.slice(firstPassRows));
+  console.log(JSON.stringify({ target: "test", phase: "all-rows-persisted", rowsPersisted: rowCount, ...secondPass }));
   const completed = await completeBaseSave(baseId, revision, [], userId);
   const repeatedCompletion = await completeBaseSave(baseId, revision, [], userId);
   const [base, persisted, lots, reservations] = await Promise.all([
@@ -133,7 +122,7 @@ try {
   if (!completed || !repeatedCompletion || persisted !== rowCount || base.cantidadImportados !== rowCount || base.estado !== "LISTA_PARA_ENRIQUECER" || !completedMetadata.completed || completedMetadata.revision !== null || completedMetadata.commercialDistributionConfirmed || lots !== 0 || reservations !== 0) {
     throw new Error("The completed ORIGINAL did not retain the required pre-enrichment state.");
   }
-  console.log(JSON.stringify({ target: "test", testRunId, expectedBranchId, interruptedAt: firstPassRows, interruptedSaveRejected: true, rowsPersisted: persisted, completedBeforeEnrichment: true, idempotentCompletion: true, lots, reservations, providerCalls: 0 }));
+  console.log(JSON.stringify({ target: "test", testRunId, expectedBranchId, interruptedAt: firstPassRows, interruptedSaveRejected: true, rowsPersisted: persisted, requests: firstPass.requests + secondPass.requests, elapsedMs: firstPass.elapsedMs + secondPass.elapsedMs, rowsPerSecond: Math.round(rowCount / ((firstPass.elapsedMs + secondPass.elapsedMs) / 1_000)), completedBeforeEnrichment: true, idempotentCompletion: true, lots, reservations, providerCalls: 0 }));
 } catch (error) {
   console.error(JSON.stringify({ target: "test", phase: "failed", error: error instanceof Error ? error.message : "unknown" }));
   throw error;

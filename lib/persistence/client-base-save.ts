@@ -28,6 +28,10 @@ export type BatchSaveResult = {
   releasedPriorReservations: number;
 };
 
+/** Bounded parallelism avoids 100 serial network round trips for a 10k base
+ * while keeping retries and Neon connection pressure controlled. */
+export const RECORD_SAVE_CONCURRENCY = 4;
+
 async function request<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -48,11 +52,12 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
 export async function saveBatchToHistory(batch: WorkingBatch, name: string, options: { confirmCommercialDistribution?: boolean } = {}): Promise<BatchSaveResult> {
   const { start, records } = serializeBatch(batch, name);
   await request("/api/bases", { method: "POST", body: JSON.stringify(start) });
-  for (const chunk of splitRecords(records)) {
-    await request(`/api/bases/${start.id}/registros`, {
+  const chunks = splitRecords(records);
+  for (let index = 0; index < chunks.length; index += RECORD_SAVE_CONCURRENCY) {
+    await Promise.all(chunks.slice(index, index + RECORD_SAVE_CONCURRENCY).map((chunk) => request(`/api/bases/${start.id}/registros`, {
       method: "POST",
       body: JSON.stringify({ revision: start.revision, records: chunk }),
-    });
+    })));
   }
   return request<BatchSaveResult>(`/api/bases/${start.id}/finalizar`, {
     method: "POST",
