@@ -17,6 +17,8 @@ export type GlobalRecyclingCriteria = {
   recyclableTipifications: readonly string[];
   minimumMonths: number;
   minimumDate: string;
+  /** Optional server-validated ORIGINAL-base scope; omitted means global. */
+  baseOriginalId?: string;
 };
 
 type Decision = "ELEGIBLE" | "EXCLUIDO" | "REVISION" | "BLOQUEADO";
@@ -63,12 +65,12 @@ function baseIsValid(base: { metadatos: unknown; tipo: string; estado: string; c
     && Boolean(base.metadatos && typeof base.metadatos === "object" && (base.metadatos as { completed?: unknown }).completed === true);
 }
 
-async function snapshotOriginalBases(executionId: string) {
+async function snapshotOriginalBases(executionId: string, baseOriginalId?: string) {
   let cursor: string | undefined;
   let total = 0;
   do {
     const bases = await prisma.base.findMany({
-      where: { tipo: "ORIGINAL", archivadaEn: null, estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true } },
+      where: { tipo: "ORIGINAL", archivadaEn: null, estado: { not: "LISTA_PARA_LIMPIAR" }, cantidadValidos: { gt: 0 }, metadatos: { path: ["completed"], equals: true }, ...(baseOriginalId ? { id: baseOriginalId } : {}) },
       select: { id: true, codigo: true, cantidadImportados: true, cantidadValidos: true, cantidadExcluidos: true, fechaRecepcion: true, estado: true, tipo: true, metadatos: true },
       orderBy: { id: "asc" }, take: BASE_PAGE_SIZE, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
@@ -91,6 +93,10 @@ export async function createGlobalRecyclingExecution(input: { operationId: strin
   const existing = await prisma.ejecucionReciclajeGlobal.findUnique({ where: { operacionId: input.operationId }, select: { id: true, estado: true } });
   if (existing) return { id: existing.id, status: existing.estado, reused: true };
   const criteria = validateCriteria(input.criteria);
+  if (criteria.baseOriginalId) {
+    const selectedBase = await prisma.base.findUnique({ where: { id: criteria.baseOriginalId }, select: { tipo: true, estado: true, cantidadValidos: true, metadatos: true, archivadaEn: true } });
+    if (!selectedBase || selectedBase.archivadaEn || !baseIsValid(selectedBase)) throw new Error("La base ORIGINAL seleccionada no está completa y activa.");
+  }
   const fileIds = [...new Set(input.archivoCrmIds)];
   if (!fileIds.length || fileIds.length !== input.archivoCrmIds.length) throw new Error("Los archivos CRM seleccionados no son válidos.");
   const [user, files] = await Promise.all([
@@ -103,15 +109,15 @@ export async function createGlobalRecyclingExecution(input: { operationId: strin
     const created = await prisma.ejecucionReciclajeGlobal.create({
       data: {
         operacionId: input.operationId, usuarioId: input.userId, fechaEfectiva: day(criteria.effectiveDate)!, versionReglas: GLOBAL_RECYCLING_RULE_VERSION,
-        criterios: { version: 1, criteria },
+        criterios: { version: 2, criteria, baseOriginalId: criteria.baseOriginalId ?? null },
         archivos: { create: files.map((file) => ({
           archivoCrmId: file.id, importacionId: file.importacionId, nombreArchivo: file.nombreArchivo,
           metadatos: { version: 1, archivoTipificacionesLegacyId: file.archivoTipificacionesLegacyId, sourceMetadata: file.metadatos },
         })) },
       }, select: { id: true, estado: true },
     });
-    const baseCount = await snapshotOriginalBases(created.id);
-    await prisma.ejecucionReciclajeGlobal.update({ where: { id: created.id }, data: { resumen: { version: 1, snapshot: "COMPLETO", bases: baseCount, archivos: files.length } } });
+    const baseCount = await snapshotOriginalBases(created.id, criteria.baseOriginalId);
+    await prisma.ejecucionReciclajeGlobal.update({ where: { id: created.id }, data: { resumen: { version: 2, snapshot: "COMPLETO", bases: baseCount, archivos: files.length, baseOriginalId: criteria.baseOriginalId ?? null } } });
     return { id: created.id, status: created.estado, reused: false };
   } catch (error) {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
@@ -123,7 +129,7 @@ export async function createGlobalRecyclingExecution(input: { operationId: strin
 
 function decide(input: {
   mobile: string;
-  records: { id: string; baseId: string; baseCode: string; sourceRow: number; documento: string | null; nombre: string | null; operadorActual: string | null; fechaPortabilidad: Date | null; provenance: string }[];
+  records: { id: string; baseId: string; baseCode: string; sourceRow: number; documento: string | null; nombre: string | null; operadorActual: string | null; fechaPortabilidad: Date | null; provenance: string; lots: readonly { id: string; baseId: string; baseOriginalId: string | null; campaign: string; number: number; createdAt: Date; cycleId: string | null }[] }[];
   canonicalRows: { id: string; archivoCrmId: string; hojaOrigen: string; numeroFilaOrigen: number; fechaGestion: Date | null; tipificacionOriginal: string | null; ventaConfirmada: boolean; evidenciaVenta: string | null }[];
   legacyManagements: { id: string; archivoId: string; numeroFilaOrigen: number; fechaGestion: Date | null; tipificacionOriginal: string | null; ventaConfirmada: boolean; evidenciaVenta: string | null; metadatos: unknown }[];
   blocked: boolean;
@@ -134,17 +140,25 @@ function decide(input: {
   const sources = {
     // v2 keeps non-personal comparison evidence, source IDs and management
     // facts. It deliberately avoids copying names/documents into the snapshot.
-    version: 2,
+    version: 3,
     mobile: input.mobile,
     records: input.records.map((record) => ({
       recordId: record.id, baseId: record.baseId, baseCode: record.baseCode, sourceRow: record.sourceRow,
       provenance: record.provenance, operadorActual: record.operadorActual,
       fechaPortabilidad: record.fechaPortabilidad?.toISOString().slice(0, 10) ?? null,
       documentoPresente: Boolean(record.documento), identidadPresente: Boolean(record.nombre),
+      lotes: record.lots.map((lot) => ({ loteId: lot.id, baseId: lot.baseId, baseOriginalId: lot.baseOriginalId, campana: lot.campaign, numeroLote: lot.number, fechaDistribucion: lot.createdAt.toISOString(), cicloId: lot.cycleId })),
     })),
     canonicalRows: input.canonicalRows.map((row) => ({ rowId: row.id, archivoCrmId: row.archivoCrmId, hoja: row.hojaOrigen, fila: row.numeroFilaOrigen, fechaGestion: row.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(row.tipificacionOriginal), ventaConfirmada: row.ventaConfirmada })),
     legacyManagements: input.legacyManagements.map((management) => ({ managementId: management.id, archivoId: management.archivoId, fila: management.numeroFilaOrigen, fechaGestion: management.fechaGestion?.toISOString().slice(0, 10) ?? null, tipificacion: normalizeRecyclingTipification(management.tipificacionOriginal), ventaConfirmada: management.ventaConfirmada, ventaAmbigua: saleAmbiguous(management.metadatos) })),
     activeReservationIds: [...input.reservationIds],
+    atribucionDistribucion: (() => {
+      const lots = input.records.flatMap((record) => record.lots.map((lot) => ({ ...lot, recordId: record.id })));
+      const unique = new Map(lots.map((lot) => [lot.id, lot]));
+      return unique.size === 0 ? { estado: "SIN_DISTRIBUCION_HISTORICA", loteIds: [] } : unique.size === 1
+        ? { estado: "VERIFICADA", loteIds: [...unique.keys()] }
+        : { estado: "AMBIGUA", loteIds: [...unique.keys()] };
+    })(),
   } as Prisma.InputJsonValue;
   const managements = [
     ...input.canonicalRows.map((row) => ({ id: row.id, managedAt: row.fechaGestion, tipification: row.tipificacionOriginal, confirmed: row.ventaConfirmada, evidence: row.evidenciaVenta, ambiguous: false })),
@@ -247,6 +261,12 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
         prisma.reservaComercial.findMany({ where: { movilNormalizado: { in: selected }, estado: "ACTIVA" }, select: { id: true, movilNormalizado: true } }),
         legacyIds.length ? prisma.gestionTipificacion.findMany({ where: { archivoId: { in: legacyIds }, movilNormalizado: { in: selected } }, select: { id: true, archivoId: true, numeroFilaOrigen: true, movilNormalizado: true, fechaGestion: true, tipificacionOriginal: true, ventaConfirmada: true, evidenciaVenta: true, metadatos: true } }) : [],
       ]);
+      // The CRM filename never determines origin. These persisted relations are
+      // the only evidence used to attach a CRM mobile to prior distribution.
+      const lotRelations = records.length ? await prisma.loteRegistro.findMany({
+        where: { registroId: { in: records.map((record) => record.id) } },
+        select: { registroId: true, lote: { select: { id: true, baseId: true, baseOriginalId: true, campana: true, numeroLote: true, creadoEn: true, base: { select: { metadatos: true } } } } },
+      }) : [];
       const group = <T extends { movilNormalizado: string | null }>(items: readonly T[]) => {
         const result = new Map<string, T[]>();
         for (const item of items) if (item.movilNormalizado) result.set(item.movilNormalizado, [...(result.get(item.movilNormalizado) ?? []), item]);
@@ -254,13 +274,21 @@ export async function evaluateGlobalRecyclingExecution(executionId: string) {
       };
       const byRows = group(rows);
       const byRecords = group(records);
+      const lotsByRecord = new Map<string, { id: string; baseId: string; baseOriginalId: string | null; campaign: string; number: number; createdAt: Date; cycleId: string | null }[]>();
+      for (const relation of lotRelations) {
+        const metadata = relation.lote.base.metadatos;
+        const cycleId = metadata && typeof metadata === "object" && typeof (metadata as { globalRecyclingExecutionId?: unknown }).globalRecyclingExecutionId === "string"
+          ? (metadata as { globalRecyclingExecutionId: string }).globalRecyclingExecutionId
+          : null;
+        lotsByRecord.set(relation.registroId, [...(lotsByRecord.get(relation.registroId) ?? []), { id: relation.lote.id, baseId: relation.lote.baseId, baseOriginalId: relation.lote.baseOriginalId, campaign: relation.lote.campana, number: relation.lote.numeroLote, createdAt: relation.lote.creadoEn, cycleId }]);
+      }
       const byLegacy = group(legacy);
       const sold = new Set(sales.flatMap((row) => row.movilNormalizado ? [row.movilNormalizado] : []));
       const reservationsByMobile = group(reservations);
       const decisions = selected.map((mobile) => {
         const result = decide({
           mobile,
-          records: (byRecords.get(mobile) ?? []).map((record) => ({ id: record.id, baseId: record.base.id, baseCode: record.base.codigo, sourceRow: record.numeroFilaOriginal, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: provenance(record.datosOriginales) })),
+          records: (byRecords.get(mobile) ?? []).map((record) => ({ id: record.id, baseId: record.base.id, baseCode: record.base.codigo, sourceRow: record.numeroFilaOriginal, documento: record.documento, nombre: record.nombre, operadorActual: record.operadorActual, fechaPortabilidad: record.fechaPortabilidad, provenance: provenance(record.datosOriginales), lots: lotsByRecord.get(record.id) ?? [] })),
           canonicalRows: byRows.get(mobile) ?? [], legacyManagements: byLegacy.get(mobile) ?? [], blocked: sold.has(mobile), reserved: (reservationsByMobile.get(mobile) ?? []).length > 0, reservationIds: (reservationsByMobile.get(mobile) ?? []).map((reservation) => reservation.id), criteria,
         });
         summary.evaluated += 1;
@@ -284,7 +312,7 @@ type DecisionSource = { version?: unknown; records?: unknown; activeReservationI
 function sourceEvidence(value: unknown): { version: number; records: { recordId: string }[]; activeReservationIds: string[] } | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as DecisionSource;
-  if (candidate.version !== 2 || !Array.isArray(candidate.records)) return null;
+  if ((candidate.version !== 2 && candidate.version !== 3) || !Array.isArray(candidate.records)) return null;
   const records = candidate.records.flatMap((item) => item && typeof item === "object" && typeof (item as { recordId?: unknown }).recordId === "string"
     ? [{ recordId: (item as { recordId: string }).recordId }]
     : []);

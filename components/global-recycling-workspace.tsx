@@ -18,6 +18,7 @@ import {
   restoreBatch,
   type LoadedBase,
 } from "@/lib/persistence/workspace-persistence";
+import { OriginalBaseSelector } from "@/components/original-base-selector";
 import type { WorkingBatch } from "@/lib/workspace/batch";
 type Parsed = {
   fileName: string;
@@ -113,6 +114,7 @@ export function GlobalRecyclingWorkspace({
     [selected, setSelected] = useState<Set<string>>(
       () => new Set(defaultRecyclableTipifications),
     ),
+    [baseOriginalId, setBaseOriginalId] = useState(""),
     [execution, setExecution] = useState<Execution | null>(null),
     [reasons, setReasons] = useState<Reason[]>([]),
     [busy, setBusy] = useState<string | null>(null),
@@ -329,6 +331,7 @@ export function GlobalRecyclingWorkspace({
           body: JSON.stringify({
             operationId: crypto.randomUUID(),
             archivoCrmIds: fileIds,
+            baseOriginalId: baseOriginalId || undefined,
             criteria: {
               effectiveDate: new Date().toISOString().slice(0, 10),
               recyclableTipifications: selectedAvailableTipifications,
@@ -519,6 +522,10 @@ export function GlobalRecyclingWorkspace({
         detail="Las tipificaciones incluidas definen candidatos CRM. No autorizan contacto: ventas, oposición, reservas, operador verificable y permanencia se comprueban en servidor."
         done={execution?.status === "EVALUADA"}
       >
+        <div className="mb-4 max-w-2xl">
+          <p className="mb-2 text-xs leading-5 text-slate-600">Opcional: limita esta ejecución a una base ORIGINAL activa. Vacío conserva el universo global; las ventas, oposiciones y reservas siguen siendo globales.</p>
+          <OriginalBaseSelector value={baseOriginalId} onChange={setBaseOriginalId} disabled={!!busy || !!execution} label="Filtrar por base ORIGINAL" />
+        </div>
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-[#0f274f]">
             Incluidas: {selectedAvailableTipifications.length}

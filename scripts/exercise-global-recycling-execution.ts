@@ -28,6 +28,8 @@ try {
   ] } } });
   await db.base.create({ data: { ...base(ids.b, 2), registros: { create: [rec(2, mobiles[0]!), rec(3, mobiles[1]!, { documento: "CONFLICT", operadorActual: "Orange" })] } } });
   await db.lote.create({ data: { id: ids.lot, baseId: ids.a, baseOriginalId: ids.a, campana: "YOIGO", numeroLote: 1, cantidadRegistros: 1 } });
+  const distributedRecord = await db.registro.findUniqueOrThrow({ where: { baseId_numeroFilaOriginal: { baseId: ids.a, numeroFilaOriginal: 2 } }, select: { id: true } });
+  await db.loteRegistro.create({ data: { loteId: ids.lot, registroId: distributedRecord.id } });
   await db.reservaComercial.create({ data: { movilNormalizado: mobiles[3]!, baseId: ids.a, loteId: ids.lot, campana: "YOIGO", usuarioId: ids.user, operacionId: `rg3-res-${run}`, metadatos: meta } });
   const saleImport = await db.importacionVentas.create({ data: { importacionId: `rg3-sale-${run}`, huellaContenido: `h${run.replaceAll("-", "")}`, usuarioId: ids.user, nombreArchivo: "synthetic.xlsx", resumen: meta } });
   await db.ventaExterna.create({ data: { importacionId: saleImport.id, numeroFilaOrigen: 2, movilNormalizado: mobiles[2]!, estado: "CONFIRMADA", resultadoConciliacion: "SINTETICO", metadatos: meta } });
@@ -46,19 +48,23 @@ try {
   const reasons = decisions.reduce<Record<string, number>>((a, x) => ({ ...a, [x.motivo]: (a[x.motivo] ?? 0) + 1 }), {});
   const reservedDecision = decisions.find((decision) => decision.movilNormalizado === mobiles[3]);
   const reservationIds = reservedDecision?.fuentes && typeof reservedDecision.fuentes === "object" ? (reservedDecision.fuentes as { activeReservationIds?: unknown }).activeReservationIds : null;
-  if (decisions.length !== 10 || count.ELEGIBLE !== 3 || count.EXCLUIDO !== 1 || count.BLOQUEADO !== 1 || count.REVISION !== 5 || !decisions.every((d) => Array.isArray((d.fuentes as { records?: unknown }).records)) || !Array.isArray(reservationIds) || reservationIds.length !== 1) throw new Error(`Global decisions are not complete: ${JSON.stringify({ count, reasons })}`);
+  const attributed = decisions.find((decision) => decision.movilNormalizado === mobiles[0])?.fuentes as { records?: { lotes?: { loteId?: string }[] }[]; atribucionDistribucion?: { estado?: string } } | undefined;
+  if (decisions.length !== 10 || count.ELEGIBLE !== 3 || count.EXCLUIDO !== 1 || count.BLOQUEADO !== 1 || count.REVISION !== 5 || !decisions.every((d) => Array.isArray((d.fuentes as { records?: unknown }).records)) || !Array.isArray(reservationIds) || reservationIds.length !== 1 || attributed?.atribucionDistribucion?.estado !== "VERIFICADA" || attributed.records?.flatMap((record) => record.lotes ?? []).some((lot) => lot.loteId === ids.lot) !== true) throw new Error(`Global decisions are not complete: ${JSON.stringify({ count, reasons })}`);
   await db.ventaExterna.create({ data: { importacionId: saleImport.id, numeroFilaOrigen: 3, movilNormalizado: mobiles[0]!, estado: "CONFIRMADA", resultadoConciliacion: "SINTETICO", metadatos: meta } });
   const next = await createGlobalRecyclingExecution({ operationId: `rg3-next-${run}`, userId: ids.user, archivoCrmIds: [ids.file], criteria });
   await evaluateGlobalRecyclingExecution(next.id);
+  const filtered = await createGlobalRecyclingExecution({ operationId: `rg3-filtered-${run}`, userId: ids.user, archivoCrmIds: [ids.file], criteria: { ...criteria, baseOriginalId: ids.a } });
+  const filteredBases = await db.ejecucionReciclajeGlobalBase.count({ where: { ejecucionId: filtered.id } });
+  if (filteredBases !== 1) throw new Error("The optional ORIGINAL-base filter did not freeze exactly one base.");
   const [oldD, nextD] = await Promise.all([
     db.decisionEjecucionReciclajeGlobal.findUniqueOrThrow({ where: { ejecucionId_movilNormalizado: { ejecucionId: created.id, movilNormalizado: mobiles[0]! } } }),
     db.decisionEjecucionReciclajeGlobal.findUniqueOrThrow({ where: { ejecucionId_movilNormalizado: { ejecucionId: next.id, movilNormalizado: mobiles[0]! } } }),
   ]);
   if (oldD.decision !== "ELEGIBLE" || nextD.decision !== "BLOQUEADO") throw new Error("Historical snapshot changed during reevaluation.");
   if (await db.gestionTipificacion.count({ where: { archivoId: ids.legacy } }) !== 2) throw new Error("Legacy history was modified.");
-  console.log(JSON.stringify({ target: "test", testRunId: run, decisions: 10, idempotent: true, concurrent: true, historicalAgendadoAndInteresado: true, snapshotsImmutable: true, fixturesCleaned: true }));
+  console.log(JSON.stringify({ target: "test", testRunId: run, decisions: 10, idempotent: true, concurrent: true, historicalAgendadoAndInteresado: true, distributionAttribution: true, snapshotsImmutable: true, fixturesCleaned: true }));
 } finally {
-  const ex = await db.ejecucionReciclajeGlobal.findMany({ where: { operacionId: { in: [`rg3-op-${run}`, `rg3-next-${run}`] } }, select: { id: true } }); const eids = ex.map((x) => x.id);
+  const ex = await db.ejecucionReciclajeGlobal.findMany({ where: { operacionId: { in: [`rg3-op-${run}`, `rg3-next-${run}`, `rg3-filtered-${run}`] } }, select: { id: true } }); const eids = ex.map((x) => x.id);
   if (eids.length) await db.decisionEjecucionReciclajeGlobal.deleteMany({ where: { ejecucionId: { in: eids } } });
   if (eids.length) await db.ejecucionReciclajeGlobalBase.deleteMany({ where: { ejecucionId: { in: eids } } });
   if (eids.length) await db.ejecucionReciclajeGlobalArchivo.deleteMany({ where: { ejecucionId: { in: eids } } });
