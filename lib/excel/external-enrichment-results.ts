@@ -3,7 +3,7 @@ import { datePartsFromPortability } from "./portability-date.ts";
 import { MAX_LOCAL_XLSX_BYTES, normalizeColumnName } from "./import-excel.ts";
 import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "./types.ts";
 
-export type ExternalResultField = "movil" | "operador_actual" | "operador_origen" | "portabilidad_desde" | "fecha_portabilidad";
+export type ExternalResultField = "movil" | "movil_alternativo" | "operador_actual" | "operador_origen" | "portabilidad_desde" | "fecha_portabilidad";
 export type ExternalResultMapping = Partial<Record<ExternalResultField, number>> & { movil: number };
 
 export interface ExternalResultsDataset {
@@ -26,6 +26,7 @@ export interface ExternalResultsImportSummary {
   resultsWithoutBase: number;
   invalidResults: number;
   duplicateResults: number;
+  identifierConflicts: number;
   contradictions: number;
 }
 
@@ -41,6 +42,7 @@ export class ExternalResultsImportError extends Error {
 
 const aliases: Record<ExternalResultField, readonly string[]> = {
   movil: ["telefonomovil", "telefonosmovil", "movil", "celular", "nums", "numeroemitido"],
+  movil_alternativo: ["numerocompleto"],
   operador_actual: ["operadoractual", "operador", "operadorvigente"],
   operador_origen: ["operadororiginal", "operadororigen"],
   portabilidad_desde: ["portabilidaddesde", "operadordonante"],
@@ -98,14 +100,18 @@ export function mergeExternalEnrichmentResults(input: {
   if (Object.values(target).some((index) => index === undefined)) throw new ExternalResultsImportError("La base ORIGINAL debe conservar las columnas comerciales Operador Actual, Operador Original, Portabilidad Desde, Fecha Portabilidad, Año y Mes.");
   if (!Number.isInteger(input.mapping.movil)) throw new ExternalResultsImportError("Selecciona inequívocamente la columna de móvil de resultados.");
 
-  const parsed = new Map<string, Record<ExternalResultField, string>>(); const duplicates = new Set<string>(); let invalidResults = 0;
+  const parsed = new Map<string, Record<ExternalResultField, string>>(); const duplicates = new Set<string>(); let invalidResults = 0; let identifierConflicts = 0;
   for (const row of input.results.rows) {
-    const mobile = normalizeSpanishMobile(value(row, input.mapping.movil));
+    const primary = normalizeSpanishMobile(value(row, input.mapping.movil));
+    const alternative = normalizeSpanishMobile(value(row, input.mapping.movil_alternativo));
+    if (primary && alternative && primary !== alternative) { identifierConflicts += 1; continue; }
+    const mobile = primary ?? alternative;
     if (!mobile) { invalidResults += 1; continue; }
     if (parsed.has(mobile)) { parsed.delete(mobile); duplicates.add(mobile); continue; }
     if (duplicates.has(mobile)) continue;
     parsed.set(mobile, {
       movil: mobile,
+      movil_alternativo: alternative ?? "",
       operador_actual: value(row, input.mapping.operador_actual),
       operador_origen: value(row, input.mapping.operador_origen),
       portabilidad_desde: value(row, input.mapping.portabilidad_desde),
@@ -131,5 +137,5 @@ export function mergeExternalEnrichmentResults(input: {
     if (changed) { for (const [index, next] of replacements) if (next) cells[index] = next; applied += 1; } else unchanged += 1;
     return { sourceRow: record.sourceRow, cells };
   });
-  return { output: { columns: [...input.dataset.columns], rows: resultRows }, requiresOverwriteConfirmation: needsConfirmation, summary: { importId: createImportId(), importedAt: new Date().toISOString(), sourceFileName: input.results.fileName, sourceColumns: [...input.results.columns], contentHash: input.results.contentHash, matched, applied, unchanged, missingForBase: input.cleaning.validRecords.filter((record) => !parsed.has(record.normalizedMobile)).length, resultsWithoutBase: [...parsed.keys()].filter((mobile) => !baseByMobile.has(mobile)).length, invalidResults, duplicateResults: duplicates.size, contradictions } };
+  return { output: { columns: [...input.dataset.columns], rows: resultRows }, requiresOverwriteConfirmation: needsConfirmation, summary: { importId: createImportId(), importedAt: new Date().toISOString(), sourceFileName: input.results.fileName, sourceColumns: [...input.results.columns], contentHash: input.results.contentHash, matched, applied, unchanged, missingForBase: input.cleaning.validRecords.filter((record) => !parsed.has(record.normalizedMobile)).length, resultsWithoutBase: [...parsed.keys()].filter((mobile) => !baseByMobile.has(mobile)).length, invalidResults, duplicateResults: duplicates.size, identifierConflicts, contradictions } };
 }

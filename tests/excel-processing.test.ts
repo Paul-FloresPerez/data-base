@@ -283,6 +283,15 @@ test("une resultados externos por móvil sin alterar la plantilla maestra y exig
   assert.equal(repeated.summary.resultsWithoutBase, 1);
   assert.equal(repeated.summary.invalidResults, 1);
   assert.equal(suggestExternalResultMapping(["TELÉFONO MÓVIL", "Operador Actual"]).movil, 0);
+  const dualIdentifier = mergeExternalEnrichmentResults({
+    dataset: source,
+    cleaning,
+    results: { ...results, columns: ["Número Emitido", "Número Completo", "Operador Actual"], rows: [["+34 612 345 678", "612345678", "Orange"], ["712345678", "622345678", "Orange"]] },
+    mapping: suggestExternalResultMapping(["Número Emitido", "Número Completo", "Operador Actual"]) as { movil: number },
+  });
+  assert.equal(dualIdentifier.summary.identifierConflicts, 1);
+  assert.equal(dualIdentifier.summary.applied, 1);
+  assert.equal(suggestExternalResultMapping(["Número Emitido", "Número Completo"]).movil_alternativo, 1);
 });
 
 test("deriva fecha ISO UTC sin desplazar día y deja vacías las fechas inválidas", () => {
