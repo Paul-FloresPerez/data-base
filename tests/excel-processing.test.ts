@@ -14,6 +14,7 @@ import {
 import { buildEnrichmentOutput } from "../lib/excel/enrichment-output.ts";
 import { datePartsFromPortability } from "../lib/excel/portability-date.ts";
 import { mergeHistoricalResults } from "../lib/excel/historical-results.ts";
+import { mergeExternalEnrichmentResults, suggestExternalResultMapping } from "../lib/excel/external-enrichment-results.ts";
 import { datasetFromWorkbook, ExcelImportError } from "../lib/excel/import-excel.ts";
 import {
   buildExportPlan,
@@ -250,6 +251,38 @@ test("reconcilia resultados históricos por móvil, preserva columnas y no susti
   assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[operatorActual], "Actual B");
   assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[year], "2026");
   assert.equal(result.output.rows.find((row) => row.sourceRow === 3)?.cells[portabilidadHacia], "Receptor B");
+});
+
+test("une resultados externos por móvil sin alterar la plantilla maestra y exige confirmación ante conflicto", () => {
+  const columns = ["Teléfono Movil", "Nombre", "Operador Actual", "Operador Original", "Portabilidad Desde", "Fecha Portabilidad", "Año", "Mes", ...Array.from({ length: 14 }, (_, index) => `Original ${index + 1}`)];
+  const source = { fileName: "BASE_ORIGEN.xlsx", columns, columnMapping: { movil: 0, nombre: 1, enriched: { operador_actual: 2, operador_origen: 3, portabilidad_desde: 4, fecha_portabilidad: 5, anio: 6, mes: 7 } }, records: [
+    { sourceRow: 2, cells: ["612345678", "Ana", "", "", "", "", "", "", ...Array(14).fill("A")], mobile: "612345678", document: "", name: "Ana", contactPhone: "" },
+    { sourceRow: 3, cells: ["712345678", "Bea", "Orange", "", "", "", "", "", ...Array(14).fill("B")], mobile: "712345678", document: "", name: "Bea", contactPhone: "" },
+  ] };
+  const cleaning = cleanDataset(source);
+  const results = { fileName: "externo.xlsx", contentHash: "a".repeat(64), columns: ["resultado desconocido", "Teléfono Móvil", "Operador Actual", "Fecha Portabilidad"], rows: [
+    ["x", "712345678", "Movistar", "2024-03-02"], ["x", "612345678", "Orange", "2024-02-03"], ["x", "622345678", "Orange", "2024-02-03"], ["x", "invalido", "", ""],
+  ] };
+  const mapping = { movil: 1, operador_actual: 2, fecha_portabilidad: 3 };
+  const preview = mergeExternalEnrichmentResults({ dataset: source, cleaning, results, mapping });
+  assert.equal(preview.requiresOverwriteConfirmation, true);
+  assert.equal(preview.summary.matched, 2);
+  assert.equal(preview.summary.contradictions, 1);
+  assert.equal(preview.output.rows[0]?.cells[2], "Orange");
+  assert.equal(preview.output.rows[1]?.cells[2], "Orange");
+  const applied = mergeExternalEnrichmentResults({ dataset: source, cleaning, results, mapping, confirmOverwrite: true });
+  assert.deepEqual(applied.output.columns, columns);
+  assert.equal(applied.output.rows[0]?.cells[2], "Orange");
+  assert.equal(applied.output.rows[0]?.cells[6], "2024");
+  assert.equal(applied.output.rows[0]?.cells[7], "02");
+  assert.equal(applied.output.rows[1]?.cells[2], "Movistar");
+  assert.equal(applied.output.rows[1]?.cells[8], "B");
+  const repeated = mergeExternalEnrichmentResults({ dataset: source, cleaning, results, mapping, existingOutput: applied.output, confirmOverwrite: true });
+  assert.equal(repeated.summary.applied, 0);
+  assert.equal(repeated.summary.unchanged, 2);
+  assert.equal(repeated.summary.resultsWithoutBase, 1);
+  assert.equal(repeated.summary.invalidResults, 1);
+  assert.equal(suggestExternalResultMapping(["TELÉFONO MÓVIL", "Operador Actual"]).movil, 0);
 });
 
 test("deriva fecha ISO UTC sin desplazar día y deja vacías las fechas inválidas", () => {

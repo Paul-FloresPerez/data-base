@@ -3,6 +3,7 @@ import type { CleaningResult, EnrichmentOutput, ImportedDataset } from "../excel
 import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
 import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
 import type { HistoricalResultImportSummary } from "../excel/historical-results.ts";
+import type { ExternalResultsImportSummary } from "../excel/external-enrichment-results.ts";
 
 export type BatchStatus = "lista_para_limpiar" | "lista_para_enriquecer" | "lista_para_distribuir";
 export type BatchKind = "ORIGINAL" | "RECICLADA";
@@ -16,7 +17,7 @@ export interface DistributionSettings {
 }
 
 /** The source contract determines whether the Sozar stage is applicable. */
-export type ImportMode = "SIN_ENRIQUECER" | "YA_ENRIQUECIDA";
+export type ImportMode = "SIN_ENRIQUECER" | "ENRIQUECIMIENTO_EXTERNO" | "YA_ENRIQUECIDA";
 
 /** Source of the enrichment data for each record. It is never inferred from a UI label. */
 export type RecordProvenance = "EXCEL" | "CRM" | "MOCK" | "API_REAL";
@@ -48,6 +49,8 @@ export interface WorkingBatch {
   historicalResultImport: HistoricalResultImportSummary | null;
   /** Append-only references to each imported historical tipification file. */
   historicalResultImports: HistoricalResultImportSummary[];
+  /** Append-only evidence of each externally supplied enrichment workbook. */
+  externalResultImports: ExternalResultsImportSummary[];
   /** Set only after an export file is successfully generated and download is initiated locally. */
   exportCompletedAt: string | null;
   /** True only after the server persisted lots and their commercial reservations. */
@@ -126,6 +129,7 @@ export function createWorkingBatch(
     enrichmentOutput: null,
     historicalResultImport: null,
     historicalResultImports: [],
+    externalResultImports: [],
     exportCompletedAt: null,
     commercialDistributionConfirmed: false,
     provenanceBySourceRow: Object.fromEntries(dataset.records.map((record) => [record.sourceRow, "EXCEL"])),

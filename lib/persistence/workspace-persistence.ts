@@ -8,6 +8,7 @@ import type { BatchKind, DistributionSettings, ImportMode, RecordProvenance, Wor
 import type { HlrConsultationMetadata } from "../services/hlr-contract.ts";
 import type { StoredRealHlrQueuePlan } from "../services/real-hlr-queue-plan.ts";
 import type { HistoricalResultImportSummary } from "../excel/historical-results.ts";
+import type { ExternalResultsImportSummary } from "../excel/external-enrichment-results.ts";
 
 /** Kept below Vercel's request limit; the client sends one chunk at a time. */
 export const RECORDS_PER_REQUEST = 100;
@@ -55,6 +56,7 @@ export interface StoredMetadata {
   realHlrConsultationsByMobile?: Record<string, HlrConsultationMetadata>;
   historicalResultImport?: HistoricalResultImportSummary | null;
   historicalResultImports?: HistoricalResultImportSummary[];
+  externalResultImports?: ExternalResultsImportSummary[];
   receivedAt?: string | null;
   originalBaseId?: string | null;
   originalBaseCode?: string | null;
@@ -183,6 +185,7 @@ export function serializeBatch(batch: WorkingBatch, name: string): { start: Save
         realHlrConsultationsByMobile: batch.realHlrConsultationsByMobile,
         historicalResultImport: batch.historicalResultImport,
         historicalResultImports: batch.historicalResultImports,
+        externalResultImports: batch.externalResultImports,
         receivedAt: batch.receivedAt,
         originalBaseId: batch.originalBaseId,
         originalBaseCode: batch.originalBaseCode,
@@ -258,6 +261,7 @@ export function restoreBatch(base: LoadedBase): WorkingBatch {
     enrichmentOutput: base.metadata.enrichmentColumns ? { columns: base.metadata.enrichmentColumns, rows: operationalRecords.flatMap((record) => record.enrichedCells ? [{ sourceRow: record.sourceRow, cells: record.enrichedCells }] : []) } : null,
     historicalResultImport: base.metadata.historicalResultImport ?? base.metadata.historicalResultImports?.at(-1) ?? null,
     historicalResultImports: base.metadata.historicalResultImports ?? (base.metadata.historicalResultImport ? [base.metadata.historicalResultImport] : []),
+    externalResultImports: base.metadata.externalResultImports ?? [],
     exportCompletedAt: base.metadata.exportCompletedAt ?? null,
     commercialDistributionConfirmed: base.metadata.commercialDistributionConfirmed === true,
     provenanceBySourceRow: Object.fromEntries(records.map((record) => [record.sourceRow, record.provenance ?? "EXCEL"])),

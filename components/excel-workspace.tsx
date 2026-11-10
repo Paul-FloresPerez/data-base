@@ -19,6 +19,7 @@ import { buildEnrichmentOutput } from "@/lib/excel/enrichment-output";
 import { importExcelFile } from "@/lib/excel/import-excel";
 import { outputFromPreEnrichedExcel, summarizePreEnrichedExcel } from "@/lib/excel/pre-enriched-import";
 import { importHistoricalResultsFile, type HistoricalResultImportSummary } from "@/lib/excel/historical-results";
+import { importExternalResultsFile, mergeExternalEnrichmentResults, suggestExternalResultMapping, type ExternalResultMapping, type ExternalResultsDataset, type ExternalResultsImportSummary } from "@/lib/excel/external-enrichment-results";
 import {
   enrichedFieldHeaders,
   enrichedFieldOrder,
@@ -35,7 +36,7 @@ import { getFirstRealSozarTestCandidates, getPendingRealHlrRecords, getRealHlrPr
 import { prepareDisabledRealHlrQueue, REAL_HLR_QUEUE_VERSION } from "@/lib/services/real-hlr-queue-plan";
 import { getFirstRealSozarUiReadiness } from "@/lib/services/sozar-first-real-ui-readiness";
 import { batchSaveSignature, needsBatchSave, saveBatchToHistory } from "@/lib/persistence/client-base-save";
-import { buildMasterOutput } from "@/lib/export/xlsx-export";
+import { buildMasterOutput, createXlsxWorkbook, workbookToArray } from "@/lib/export/xlsx-export";
 import {
   createWorkingBatch,
   defaultCampaignFilters,
@@ -126,6 +127,7 @@ function SecondaryButton({ children, className = "", ...props }: ButtonHTMLAttri
 export function ExcelWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const historicalFileInputRef = useRef<HTMLInputElement>(null);
+  const externalResultsFileInputRef = useRef<HTMLInputElement>(null);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>("dashboard");
   const [batch, setBatch] = useState<WorkingBatch | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
@@ -139,6 +141,11 @@ export function ExcelWorkspace() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [isImportingHistorical, setIsImportingHistorical] = useState(false);
   const [historicalResultStatus, setHistoricalResultStatus] = useState<HistoricalResultImportSummary | null>(null);
+  const [externalResults, setExternalResults] = useState<ExternalResultsDataset | null>(null);
+  const [externalMapping, setExternalMapping] = useState<Partial<ExternalResultMapping>>({});
+  const [externalResultStatus, setExternalResultStatus] = useState<ExternalResultsImportSummary | null>(null);
+  const [externalOverwritePending, setExternalOverwritePending] = useState(false);
+  const [isImportingExternalResults, setIsImportingExternalResults] = useState(false);
   const [realHlrLimit, setRealHlrLimit] = useState("10000");
   const [realHlrBudget, setRealHlrBudget] = useState("0");
   const [isRealHlrQueueConfirmed, setIsRealHlrQueueConfirmed] = useState(false);
@@ -303,7 +310,7 @@ export function ExcelWorkspace() {
       },
       {
         id: "enriquecer",
-        label: batch?.importMode === "YA_ENRIQUECIDA" ? "Validar datos" : "Enriquecer",
+        label: batch?.importMode === "YA_ENRIQUECIDA" ? "Validar datos" : batch?.importMode === "ENRIQUECIMIENTO_EXTERNO" ? "Resultados externos" : "Enriquecer",
         module: "enriquecimiento",
         state: enrichmentReady ? "complete" : cleaningReady && activeModule === "enriquecimiento" ? "current" : "pending",
       },
@@ -347,6 +354,10 @@ export function ExcelWorkspace() {
       setIsOverwriteConfirmationOpen(false);
       setIsReplaceConfirmationOpen(false);
       setHistoricalResultStatus(null);
+      setExternalResults(null);
+      setExternalMapping({});
+      setExternalResultStatus(null);
+      setExternalOverwritePending(false);
       setHlrSelectionScope(null);
       setSingleHlrTestMobile("");
       setIsSingleHlrTestConfirmed(false);
@@ -437,6 +448,7 @@ export function ExcelWorkspace() {
             realHlrQueue: null,
             historicalResultImport: null,
             historicalResultImports: [],
+            externalResultImports: [],
           }
         : currentBatch);
       setIsOverwriteConfirmationOpen(false);
@@ -542,6 +554,75 @@ export function ExcelWorkspace() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (file) void importHistoricalResults(file);
+  }
+
+  async function selectExternalResults(file: File) {
+    setError(null);
+    setIsImportingExternalResults(true);
+    try {
+      const imported = await importExternalResultsFile(file);
+      setExternalResults(imported);
+      setExternalMapping(suggestExternalResultMapping(imported.columns));
+      setExternalResultStatus(null);
+      setExternalOverwritePending(false);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudo leer el archivo de resultados.");
+    } finally {
+      setIsImportingExternalResults(false);
+    }
+  }
+
+  function handleExternalResultsFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) void selectExternalResults(file);
+  }
+
+  function applyExternalResults(confirmOverwrite = false) {
+    if (!batch || !dataset || !cleaning || !externalResults || externalMapping.movil === undefined) return;
+    const previousImport = batch.externalResultImports.find((item) => item.contentHash === externalResults.contentHash);
+    if (previousImport) {
+      setExternalResultStatus(previousImport);
+      setExternalOverwritePending(false);
+      setError("Este archivo de resultados ya fue aplicado a esta base; no se duplicó ninguna unión.");
+      return;
+    }
+    try {
+      const merged = mergeExternalEnrichmentResults({
+        dataset,
+        cleaning,
+        results: externalResults,
+        mapping: externalMapping as ExternalResultMapping,
+        existingOutput: batch.enrichmentOutput,
+        confirmOverwrite,
+      });
+      setExternalResultStatus(merged.summary);
+      setExternalOverwritePending(merged.requiresOverwriteConfirmation);
+      if (merged.requiresOverwriteConfirmation) return;
+      setBatch((current) => current?.id === batch.id ? {
+        ...current,
+        enrichmentOutput: merged.output,
+        externalResultImports: [...current.externalResultImports, merged.summary],
+        provenanceBySourceRow: Object.fromEntries(current.dataset.records.map((record) => [record.sourceRow, "EXCEL"] as const)),
+        distribution: { ...current.distribution, shuffleSeed: current.distribution.shuffleSeed ?? current.id },
+        exportCompletedAt: null,
+        realHlrQueue: null,
+      } : current);
+      setExternalOverwritePending(false);
+      setError(null);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "No se pudieron unir los resultados externos.");
+    }
+  }
+
+  async function downloadExternalMobileList() {
+    if (!cleaning || !dataset) return;
+    const xlsx = await import("xlsx");
+    const rows = cleaning.validRecords.map((record) => ({ sourceRow: record.sourceRow, cells: [record.normalizedMobile] }));
+    const workbook = createXlsxWorkbook(xlsx, [dataset.columns[dataset.columnMapping.movil] ?? "Teléfono Movil"], rows, "Móviles aptos");
+    const url = URL.createObjectURL(new Blob([workbookToArray(xlsx, workbook)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "MOVILES_APTOS_CONSULTA_EXTERNA.xlsx"; anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function prepareRealHlrQueue() {
@@ -717,6 +798,11 @@ export function ExcelWorkspace() {
               <p className="text-base font-semibold text-slate-900">Selecciona un archivo Excel</p>
               <p className="mt-2 text-sm leading-6 text-slate-600">Se procesará localmente. El archivo original no se modifica ni se envía a un servidor.</p>
               <fieldset className="mt-5 grid gap-2 text-left" aria-label="Modalidad de importación">
+                <label className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedImportMode === "ENRIQUECIMIENTO_EXTERNO" ? "border-blue-500 bg-blue-50 text-blue-950" : "border-slate-200 text-slate-700"}`}>
+                  <input className="mr-2" type="radio" name="import-mode" checked={selectedImportMode === "ENRIQUECIMIENTO_EXTERNO"} onChange={() => setSelectedImportMode("ENRIQUECIMIENTO_EXTERNO")} />
+                  <span className="font-semibold">Base original para enriquecer externamente</span>
+                  <span className="mt-1 block text-xs leading-5">Exporta solo móviles aptos, importa los resultados y conserva la plantilla sin usar Sozar.</span>
+                </label>
                 <label className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedImportMode === "YA_ENRIQUECIDA" ? "border-blue-500 bg-blue-50 text-blue-950" : "border-slate-200 text-slate-700"}`}>
                   <input className="mr-2" type="radio" name="import-mode" checked={selectedImportMode === "YA_ENRIQUECIDA"} onChange={() => setSelectedImportMode("YA_ENRIQUECIDA")} />
                   <span className="font-semibold">Importar base ya enriquecida</span>
@@ -724,8 +810,8 @@ export function ExcelWorkspace() {
                 </label>
                 <label className={`cursor-pointer rounded-lg border p-3 text-sm ${selectedImportMode === "SIN_ENRIQUECER" ? "border-blue-500 bg-blue-50 text-blue-950" : "border-slate-200 text-slate-700"}`}>
                   <input className="mr-2" type="radio" name="import-mode" checked={selectedImportMode === "SIN_ENRIQUECER"} onChange={() => setSelectedImportMode("SIN_ENRIQUECER")} />
-                  <span className="font-semibold">Importar base sin enriquecer</span>
-                  <span className="mt-1 block text-xs leading-5">Conserva el flujo independiente de enriquecimiento; no consulta ningún proveedor automáticamente.</span>
+                  <span className="font-semibold">API integrada (cuando esté disponible)</span>
+                  <span className="mt-1 block text-xs leading-5">Mantiene el flujo de enriquecimiento independiente. No consulta ningún proveedor automáticamente.</span>
                 </label>
               </fieldset>
               <input
@@ -750,7 +836,7 @@ export function ExcelWorkspace() {
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Archivo</dt><dd className="max-w-48 truncate font-medium text-slate-900" title={dataset.fileName}>{dataset.fileName}</dd></div>
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Registros leídos</dt><dd className="font-semibold text-slate-900">{dataset.records.length}</dd></div>
                 <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Columnas</dt><dd className="font-semibold text-slate-900">{dataset.columns.length}</dd></div>
-                <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Modalidad</dt><dd className="font-semibold text-slate-900">{batch?.importMode === "YA_ENRIQUECIDA" ? "Ya enriquecida · EXCEL" : "Sin enriquecer"}</dd></div>
+                <div className="flex items-center justify-between gap-4 py-3"><dt className="text-slate-600">Modalidad</dt><dd className="font-semibold text-slate-900">{batch?.importMode === "YA_ENRIQUECIDA" ? "Ya enriquecida · EXCEL" : batch?.importMode === "ENRIQUECIMIENTO_EXTERNO" ? "Resultados externos · EXCEL" : "Sin enriquecer"}</dd></div>
               </dl>
             ) : <p className="mt-3 text-sm leading-6 text-slate-600">Aún no has seleccionado un archivo. La vista previa aparecerá aquí después de una importación correcta.</p>}
           </section>
@@ -830,6 +916,40 @@ export function ExcelWorkspace() {
     }
     if (batch?.kind === "ORIGINAL" && saveState !== "saved") {
       return <EmptyModuleState title="Guarda la base antes de enriquecer" description="La base ORIGINAL debe estar completa y confirmada por el servidor. Este guardado no genera lotes ni reservas comerciales." action={<PrimaryButton type="button" onClick={() => navigate("limpieza")}>Volver a guardar base</PrimaryButton>} />;
+    }
+    if (batch?.importMode === "ENRIQUECIMIENTO_EXTERNO") {
+      const mappingFields: { id: keyof ExternalResultMapping; label: string; required?: boolean }[] = [
+        { id: "movil", label: "Móvil", required: true },
+        { id: "operador_actual", label: "Operador actual" }, { id: "operador_origen", label: "Operador original" },
+        { id: "portabilidad_desde", label: "Portabilidad desde" }, { id: "fecha_portabilidad", label: "Fecha portabilidad" },
+      ];
+      return <section aria-labelledby="resultados-externos-title" className="space-y-5">
+        <ModuleHeading eyebrow="Enriquecimiento externo" headingId="resultados-externos-title" title="Une resultados a la base ORIGINAL" description="Exporta únicamente móviles aptos, importa un XLSX externo y concilia por móvil normalizado. Sozar y MOCK no forman parte de este flujo." action={<div className="flex flex-wrap gap-2"><SecondaryButton type="button" onClick={() => navigate("limpieza")}>Volver a validación</SecondaryButton>{enrichmentOutput ? <PrimaryButton type="button" onClick={() => navigate("campanas")}>Segmentar campañas</PrimaryButton> : null}</div>} />
+        <div className="grid gap-5 xl:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+            <p className="text-sm font-semibold text-slate-900">1. Preparar móviles</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">La descarga contiene una sola columna y {cleaning.validRecords.length} móviles únicos aptos. No crea lotes ni reservas.</p>
+            <SecondaryButton type="button" onClick={() => void downloadExternalMobileList()} className="mt-4 w-full">Exportar lista de móviles</SecondaryButton>
+            <p className="mt-3 text-xs leading-5 text-slate-500">La correspondencia con filas y columnas de la base permanece en esta operación; el archivo exportado no contiene identidad, dirección ni otros datos personales.</p>
+          </section>
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+            <p className="text-sm font-semibold text-slate-900">2. Importar resultados</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">Acepta XLSX con columnas adicionales. Se detectan encabezados compatibles y puedes ajustar el mapeo antes de unirlos.</p>
+            <input ref={externalResultsFileInputRef} className="sr-only" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleExternalResultsFileChange} />
+            <SecondaryButton type="button" disabled={isImportingExternalResults} onClick={() => externalResultsFileInputRef.current?.click()} className="mt-4 w-full">{isImportingExternalResults ? "Leyendo resultados…" : "Seleccionar XLSX de resultados"}</SecondaryButton>
+            {externalResults ? <p className="mt-3 text-xs leading-5 text-slate-600">Archivo: <strong>{externalResults.fileName}</strong> · {externalResults.rows.length} fila(s) · huella SHA-256 registrada localmente.</p> : null}
+          </section>
+        </div>
+        {externalResults ? <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+          <p className="text-sm font-semibold text-slate-900">3. Mapear columnas y revisar unión</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">El móvil es obligatorio. Los campos que no existen se dejan como «No disponible». Operador donante y Portabilidad Desde no se equiparan automáticamente.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{mappingFields.map((field) => <label key={field.id} className="text-xs font-semibold text-slate-700">{field.label}{field.required ? " *" : ""}<select value={externalMapping[field.id] ?? ""} onChange={(event) => setExternalMapping((current) => ({ ...current, [field.id]: event.target.value === "" ? undefined : Number(event.target.value) }))} className="mt-1 min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-normal"><option value="">{field.required ? "Seleccionar columna" : "No disponible"}</option>{externalResults.columns.map((column, index) => <option key={`${index}-${column}`} value={index}>{column || `Columna ${index + 1}`}</option>)}</select></label>)}</div>
+          <PrimaryButton type="button" disabled={externalMapping.movil === undefined} onClick={() => applyExternalResults(false)} className="mt-5">Revisar y aplicar resultados</PrimaryButton>
+          {externalResultStatus ? <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4"><div><dt className="text-slate-500">Vinculados</dt><dd className="font-semibold">{externalResultStatus.matched}</dd></div><div><dt className="text-slate-500">Aplicados</dt><dd className="font-semibold">{externalResultStatus.applied}</dd></div><div><dt className="text-slate-500">Sin base</dt><dd className="font-semibold">{externalResultStatus.resultsWithoutBase}</dd></div><div><dt className="text-slate-500">Sin resultado</dt><dd className="font-semibold">{externalResultStatus.missingForBase}</dd></div><div><dt className="text-slate-500">Duplicados</dt><dd className="font-semibold">{externalResultStatus.duplicateResults}</dd></div><div><dt className="text-slate-500">Móviles inválidos</dt><dd className="font-semibold">{externalResultStatus.invalidResults}</dd></div><div><dt className="text-slate-500">Sin cambio</dt><dd className="font-semibold">{externalResultStatus.unchanged}</dd></div><div><dt className="text-slate-500">Conflictos</dt><dd className="font-semibold">{externalResultStatus.contradictions}</dd></div></dl> : null}
+          {externalOverwritePending ? <div role="status" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><p className="font-semibold">Hay valores comerciales existentes distintos.</p><p className="mt-1">No se ha sobrescrito ningún dato. Confirma solo si el archivo externo es la fuente correcta para esos campos.</p><PrimaryButton type="button" onClick={() => applyExternalResults(true)} className="mt-3">Confirmar sustitución explícita</PrimaryButton></div> : null}
+          {enrichmentOutput ? <div className="mt-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950"><p className="font-semibold">Resultados listos para guardar</p><p className="mt-1">Se modifican exclusivamente Operador Actual, Operador Original, Portabilidad Desde, Fecha Portabilidad, Año y Mes. Guarda antes de segmentar.</p><SecondaryButton type="button" disabled={saveState === "saving"} onClick={() => void saveOriginalBaseBeforeEnrichment()} className="mt-3">{saveState === "saving" ? "Guardando resultados…" : "Guardar resultados unidos"}</SecondaryButton></div> : null}
+        </section> : null}
+      </section>;
     }
     if (batch?.importMode === "YA_ENRIQUECIDA") {
       const hasCurrentOperator = dataset?.columnMapping.enriched.operador_actual !== undefined;
